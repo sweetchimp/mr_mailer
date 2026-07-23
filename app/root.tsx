@@ -19,8 +19,11 @@ export const links: Route.LinksFunction = () => [
   },
   {
     rel: "stylesheet",
-    href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap",
+    href: "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,500&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap",
   },
+  { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
+  { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32.png" },
+  { rel: "icon", type: "image/png", sizes: "16x16", href: "/favicon-16.png" },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -62,11 +65,39 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   }
 
   return (
-    <main className="pt-16 p-4 container mx-auto">
-      <h1>{message}</h1>
-      <p>{details}</p>
+    <main
+      style={{
+        paddingTop: "4rem",
+        padding: "4rem 1rem 1rem",
+        maxWidth: "36rem",
+        margin: "0 auto",
+      }}
+    >
+      <h1
+        style={{
+          fontFamily: "var(--font-display)",
+          fontSize: "2rem",
+          fontWeight: 500,
+          color: "var(--color-ink)",
+        }}
+      >
+        {message}
+      </h1>
+      <p style={{ color: "var(--color-ink-soft)", marginTop: "0.5rem" }}>
+        {details}
+      </p>
       {stack && (
-        <pre className="w-full p-4 overflow-x-auto">
+        <pre
+          style={{
+            marginTop: "1rem",
+            padding: "1rem",
+            overflowX: "auto",
+            fontSize: "0.75rem",
+            background: "var(--color-card)",
+            border: "1px solid var(--color-line)",
+            borderRadius: "8px",
+          }}
+        >
           <code>{stack}</code>
         </pre>
       )}

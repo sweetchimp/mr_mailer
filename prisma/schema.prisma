@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model User {
+  id                   String           @id @default(uuid()) @map("id")
+  email                String           @unique @map("email")
+  name                 String?          @map("name")
+  googleId             String?          @unique @map("google_id")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  preferredMorningTime String           @default("07:00") @map("preferred_morning_time")
+  tokenRevokedAt       DateTime?        @map("token_revoked_at")
+  emailSummaries       EmailSummary[]
+  jobFailures          JobFailure[]
+  oauthTokens          OAuthToken[]
+  replyFeedback        ReplyFeedback[]
+  subscription         Subscription?
+
+  @@map("users")
+}
+
+model OAuthToken {
+  id           String   @id @default(uuid()) @map("id")
+  userId       String   @map("user_id")
+  accessToken  String   @map("access_token") @db.Text
+  refreshToken String   @map("refresh_token") @db.Text
+  expiresAt    DateTime @map("expires_at")
+  scope        String   @map("scope") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("oauth_tokens")
+}
+
+model EmailSummary {
+  id             String   @id @default(uuid()) @map("id")
+  userId         String   @map("user_id")
+  gmailMessageId String   @unique @map("gmail_message_id")
+  sender         String   @map("sender")
+  subject        String   @map("subject")
+  priority       Priority @map("priority")
+  summaryText    String   @map("summary_text") @db.Text
+  suggestedReply String?  @map("suggested_reply") @db.Text
+  status         Status   @default(PENDING) @map("status")
+  snoozedUntil   DateTime? @map("snoozed_until")
+  createdAt      DateTime @default(now()) @map("created_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("email_summaries")
+}
+
+model JobFailure {
+  id           String   @id @default(uuid()) @map("id")
+  userId       String   @map("user_id")
+  jobType      String   @map("job_type")
+  step         String   @map("step")
+  errorMessage String   @map("error_message") @db.Text
+  context      String?  @map("context") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("job_failures")
+}
+
+model Subscription {
+  id               String   @id @default(uuid()) @map("id")
+  userId           String   @unique @map("user_id")
+  stripeCustomerId String   @unique @map("stripe_customer_id")
+  plan             String   @map("plan")
+  status           String   @map("status")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@map("subscriptions")
+}
+
+model ReplyFeedback {
+  id             String   @id @default(uuid()) @map("id")
+  emailId        String   @map("email_id")
+  userId         String   @map("user_id")
+  generatedReply String   @map("generated_reply") @db.Text
+  finalReply     String   @map("final_reply") @db.Text
+  insertions     Int      @default(0) @map("insertions")
+  deletions      Int      @default(0) @map("deletions")
+  modifications  Int      @default(0) @map("modifications")
+  createdAt      DateTime @default(now()) @map("created_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([emailId])
+  @@map("reply_feedback")
+}
+
+enum Priority {
+  HIGH
+  MEDIUM
+  LOW
+
+  @@map("priority")
+}
+
+enum Status {
+  PENDING
+  SENT
+  DISMISSED
+  SNOOZED
+
+  @@map("status")
+}

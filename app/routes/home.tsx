@@ -1,13 +1,14 @@
+import { redirect } from "react-router";
 import type { Route } from "./+types/home";
-import { Welcome } from "../welcome/welcome";
 
-export function meta({}: Route.MetaArgs) {
-  return [
-    { title: "New React Router App" },
-    { name: "description", content: "Welcome to React Router!" },
-  ];
+export function loader({ request }: Route.LoaderArgs) {
+  const url = new URL(request.url);
+  if (url.pathname === "/") {
+    return redirect("/dashboard");
+  }
+  return null;
 }
 
 export default function Home() {
-  return <Welcome />;
+  return null;
 }

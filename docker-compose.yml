@@ -1,0 +1,15 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mr_mailer_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: devpassword
+      MYSQL_DATABASE: mr_mailer
+    ports:
+      - "3306:3306"
+    volumes:
+      - mr_mysql_data:/var/lib/mysql
+
+volumes:
+  mr_mysql_data:
