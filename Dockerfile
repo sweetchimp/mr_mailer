@@ -5,6 +5,8 @@ RUN npm ci
 
 FROM node:24-alpine AS production-dependencies-env
 COPY ./package.json package-lock.json /app/
+COPY ./prisma/schema.prisma /app/prisma/schema.prisma
+COPY ./prisma.config.ts /app/prisma.config.ts
 WORKDIR /app
 RUN npm ci --omit=dev
 
