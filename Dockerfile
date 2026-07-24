@@ -1,10 +1,9 @@
 FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
 COPY prisma/schema.prisma prisma/schema.prisma
 COPY prisma.config.ts prisma.config.ts
-RUN npx prisma generate
+RUN npm ci
 COPY . .
 RUN npm run build
 
