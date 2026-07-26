@@ -24,7 +24,11 @@ export const authenticator = new Authenticator<User>();
 authenticator.use(
   new OAuth2Strategy(
     {
-      cookie: "oauth2",
+      cookie: {
+        name: "oauth2",
+        sameSite: "Lax",
+        ...(process.env.NODE_ENV === "production" && { secure: true }),
+      },
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? null,
       authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
