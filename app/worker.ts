@@ -3,9 +3,11 @@ import { Worker } from "bullmq";
 import { getRedisConnection } from "./lib/redis.server";
 import { prisma } from "./lib/prisma.server";
 import { runDigestPipeline } from "./services/digest.server";
-import { morningDigestQueue, emailReminderQueue } from "./services/queue.server";
+import { morningDigestQueue, emailReminderQueue, meetingReminderQueue, scheduleBlockQueue } from "./services/queue.server";
 import { cleanupOldRecords } from "./services/cleanup.server";
 import { sendReminderEmail } from "./services/reminder.server";
+import { checkUpcomingMeetings } from "./services/meeting-reminder.server";
+import { checkScheduleBlocks } from "./services/schedule.server";
 import { TokenRevokedError } from "./lib/google-auth.server";
 
 const connection = getRedisConnection();
@@ -162,6 +164,125 @@ reminderWorker.on("failed", (job, err) => {
   log("error", `Reminder job ${job?.id} failed: ${err.message}`);
 });
 
+const meetingReminderWorker = new Worker(
+  "meeting-reminder",
+  async (job) => {
+    log("info", "Checking upcoming meetings for reminders");
+
+    try {
+      const result = await checkUpcomingMeetings();
+      processedJobs++;
+      log(
+        "info",
+        `Meeting reminder check completed: ${result.remindersSent} reminders sent across ${result.usersChecked} users`,
+      );
+
+      for (const entry of result.errors) {
+        if (entry.error.includes("Token revoked")) {
+          log("warn", `Meeting reminders skipped for user ${entry.userId}: ${entry.error}`);
+        } else {
+          await prisma.jobFailure.create({
+            data: {
+              userId: entry.userId,
+              jobType: "meeting-reminder",
+              step: "check-meetings",
+              errorMessage: entry.error,
+              context: JSON.stringify({
+                jobId: job.id,
+                timestamp: new Date().toISOString(),
+              }),
+            },
+          });
+          failedJobs++;
+          log("error", `Meeting reminder failed for user ${entry.userId}: ${entry.error}`);
+        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("error", `Meeting reminder check failed: ${errorMessage}`);
+
+      await prisma.jobFailure.create({
+        data: {
+          userId: "system",
+          jobType: "meeting-reminder",
+          step: "check-meetings",
+          errorMessage,
+          context: JSON.stringify({
+            jobId: job.id,
+            timestamp: new Date().toISOString(),
+          }),
+        },
+      });
+
+      failedJobs++;
+      throw error;
+    }
+  },
+  {
+    connection,
+    concurrency: 1,
+  },
+);
+
+meetingReminderWorker.on("completed", (job) => {
+  log("info", `Meeting reminder job ${job.id} completed`);
+});
+
+meetingReminderWorker.on("failed", (job, err) => {
+  log("error", `Meeting reminder job ${job?.id} failed: ${err.message}`);
+});
+
+const scheduleBlockWorker = new Worker(
+  "schedule-block",
+  async (job) => {
+    log("info", "Checking schedule blocks for reminders and status transitions");
+
+    try {
+      const result = await checkScheduleBlocks();
+      processedJobs++;
+      log(
+        "info",
+        `Schedule check completed: ${result.remindersSent} reminders sent, ${result.started} started, ${result.missed} missed, ${result.rolledOver} rolled over across ${result.usersChecked} users`,
+      );
+
+      for (const entry of result.errors) {
+        log("warn", `Schedule check note for user ${entry.userId}: ${entry.error}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log("error", `Schedule check failed: ${errorMessage}`);
+
+      await prisma.jobFailure.create({
+        data: {
+          userId: "system",
+          jobType: "schedule-block",
+          step: "check-schedule",
+          errorMessage,
+          context: JSON.stringify({
+            jobId: job.id,
+            timestamp: new Date().toISOString(),
+          }),
+        },
+      });
+
+      failedJobs++;
+      throw error;
+    }
+  },
+  {
+    connection,
+    concurrency: 1,
+  },
+);
+
+scheduleBlockWorker.on("completed", (job) => {
+  log("info", `Schedule block job ${job.id} completed`);
+});
+
+scheduleBlockWorker.on("failed", (job, err) => {
+  log("error", `Schedule block job ${job?.id} failed: ${err.message}`);
+});
+
 async function catchMissedReminders() {
   const overdue = await prisma.emailSummary.findMany({
     where: {
@@ -226,6 +347,26 @@ async function registerRepeatableJobs() {
     },
   );
   log("info", "Registered daily data-cleanup job at 03:00 UTC");
+
+  await meetingReminderQueue.add(
+    "meeting-reminder-check",
+    {},
+    {
+      repeat: { pattern: "*/5 * * * *" },
+      jobId: "meeting-reminder-check",
+    },
+  );
+  log("info", "Registered meeting reminder check job every 5 minutes");
+
+  await scheduleBlockQueue.add(
+    "schedule-block-check",
+    {},
+    {
+      repeat: { pattern: "*/10 * * * *" },
+      jobId: "schedule-block-check",
+    },
+  );
+  log("info", "Registered schedule block check job every 10 minutes");
 }
 
 async function startWorker() {
@@ -240,6 +381,8 @@ async function gracefulShutdown(signal: string) {
   try {
     await worker.close();
     await reminderWorker.close();
+    await meetingReminderWorker.close();
+    await scheduleBlockWorker.close();
     await connection.quit();
     log("info", "All connections closed");
   } catch (err) {

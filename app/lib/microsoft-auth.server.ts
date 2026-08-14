@@ -1,26 +1,35 @@
 import { prisma } from "./prisma.server";
 import { decrypt, encrypt } from "./crypto.server";
+import { TokenRevokedError } from "./google-auth.server";
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
-export class TokenRevokedError extends Error {
-  constructor(
-    message: string,
-    public readonly userId: string,
-  ) {
-    super(message);
-    this.name = "TokenRevokedError";
-  }
+const MICROSOFT_SCOPES = [
+  "Mail.Read",
+  "Mail.Send",
+  "User.Read",
+  "offline_access",
+  "openid",
+  "email",
+  "profile",
+].join(" ");
+
+function getTenant(): string {
+  return process.env.MICROSOFT_TENANT_ID?.trim() || "common";
 }
 
-export async function getValidAccessToken(userId: string): Promise<string> {
+function getTokenEndpoint(): string {
+  return `https://login.microsoftonline.com/${getTenant()}/oauth2/v2.0/token`;
+}
+
+export async function getMicrosoftAccessToken(userId: string): Promise<string> {
   const tokenRecord = await prisma.oAuthToken.findFirst({
-    where: { userId, provider: "GOOGLE" },
+    where: { userId, provider: "MICROSOFT" },
     orderBy: { createdAt: "desc" },
   });
 
   if (!tokenRecord) {
-    throw new Error("No OAuth tokens found for user");
+    throw new Error("No Microsoft OAuth tokens found for user");
   }
 
   const now = new Date();
@@ -32,26 +41,26 @@ export async function getValidAccessToken(userId: string): Promise<string> {
   }
 
   if (!tokenRecord.refreshToken) {
-    throw new Error("No refresh token available");
+    throw new Error("No Microsoft refresh token available");
   }
 
   const refreshToken = decrypt(tokenRecord.refreshToken);
 
-  const response = await fetch("https://oauth2.googleapis.com/token", {
+  const response = await fetch(getTokenEndpoint(), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID!,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+      client_id: process.env.MICROSOFT_CLIENT_ID!,
+      client_secret: process.env.MICROSOFT_CLIENT_SECRET!,
       grant_type: "refresh_token",
       refresh_token: refreshToken,
+      scope: MICROSOFT_SCOPES,
     }),
   });
 
   if (!response.ok) {
     const error = await response.text();
-    const isInvalidGrant =
-      error.includes("invalid_grant") || error.includes("Token has been expired or revoked");
+    const isInvalidGrant = error.includes("invalid_grant");
 
     if (isInvalidGrant) {
       await prisma.user.update({
@@ -60,12 +69,12 @@ export async function getValidAccessToken(userId: string): Promise<string> {
       }).catch(() => {});
 
       throw new TokenRevokedError(
-        `Gmail access revoked for user ${userId}. Re-authentication required.`,
+        `Microsoft access revoked for user ${userId}. Re-authentication required.`,
         userId,
       );
     }
 
-    throw new Error(`Token refresh failed: ${response.status} ${error}`);
+    throw new Error(`Microsoft token refresh failed: ${response.status} ${error}`);
   }
 
   const data = (await response.json()) as {
@@ -73,7 +82,6 @@ export async function getValidAccessToken(userId: string): Promise<string> {
     refresh_token?: string;
     expires_in: number;
     scope: string;
-    token_type: string;
   };
 
   const newAccessToken = encrypt(data.access_token);

@@ -21,9 +21,11 @@ export async function runDigestPipeline(
   let emails: import("./email-provider.server").EmailMessage[];
   try {
     emails = await provider.getTodaysEmails(userId);
-  } catch (step) {
-    throw Object.assign(new Error("Failed to fetch emails"), {
+  } catch (cause) {
+    const original = cause instanceof Error ? cause.message : String(cause);
+    throw Object.assign(new Error(`Failed to fetch emails: ${original}`), {
       step: "email-fetch",
+      cause,
     });
   }
 
@@ -42,9 +44,11 @@ export async function runDigestPipeline(
   let summarizedEmails: DigestResult["emails"];
   try {
     summarizedEmails = await summarizeEmails(userId, emailsWithBodies);
-  } catch (step) {
-    throw Object.assign(new Error("Failed to summarize emails"), {
+  } catch (cause) {
+    const original = cause instanceof Error ? cause.message : String(cause);
+    throw Object.assign(new Error(`Failed to summarize emails: ${original}`), {
       step: "ai-summarization",
+      cause,
     });
   }
 

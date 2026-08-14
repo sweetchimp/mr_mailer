@@ -31,7 +31,7 @@ export default function JobFailures({ loaderData }: Route.ComponentProps) {
     <div style={{ minHeight: "100vh" }}>
       <header
         style={{
-          background: "linear-gradient(100deg, var(--color-dawn-1), var(--color-dawn-2), var(--color-dawn-3))",
+          background: "var(--color-masthead)",
           padding: "24px",
         }}
       >

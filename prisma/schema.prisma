@@ -12,6 +12,7 @@ model User {
   email                String           @unique @map("email")
   name                 String?          @map("name")
   googleId             String?          @unique @map("google_id")
+  microsoftId          String?          @unique @map("microsoft_id")
   createdAt            DateTime         @default(now()) @map("created_at")
   preferredMorningTime String           @default("07:00") @map("preferred_morning_time")
   tokenRevokedAt       DateTime?        @map("token_revoked_at")
@@ -19,6 +20,9 @@ model User {
   jobFailures          JobFailure[]
   oauthTokens          OAuthToken[]
   replyFeedback        ReplyFeedback[]
+  meetingReminders     MeetingReminder[]
+  meetingMinutes       MeetingMinutes[]
+  scheduleBlocks       ScheduleBlock[]
   subscription         Subscription?
 
   @@map("users")
@@ -31,6 +35,7 @@ model OAuthToken {
   refreshToken String   @map("refresh_token") @db.Text
   expiresAt    DateTime @map("expires_at")
   scope        String   @map("scope") @db.Text
+  provider     Provider @default(GOOGLE) @map("provider")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -88,6 +93,56 @@ model Subscription {
   @@map("subscriptions")
 }
 
+model MeetingReminder {
+  id              String    @id @default(uuid()) @map("id")
+  userId          String    @map("user_id")
+  calendarEventId String    @map("calendar_event_id")
+  title           String    @map("title")
+  meetingTime     DateTime  @map("meeting_time")
+  remindedAt      DateTime? @map("reminded_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, calendarEventId, meetingTime])
+  @@index([userId])
+  @@map("meeting_reminders")
+}
+
+model MeetingMinutes {
+  id          String    @id @default(uuid()) @map("id")
+  userId      String    @map("user_id")
+  title       String    @map("title")
+  rawNotes    String    @map("raw_notes") @db.Text
+  attendees   String?   @map("attendees") @db.Text
+  summaryText String    @map("summary_text") @db.Text
+  decisions   String    @map("decisions") @db.Text
+  actionItems String    @map("action_items") @db.Text
+  nextSteps   String?   @map("next_steps") @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("meeting_minutes")
+}
+
+model ScheduleBlock {
+  id        String         @id @default(uuid()) @map("id")
+  userId    String         @map("user_id")
+  title     String         @map("title")
+  startTime DateTime       @map("start_time")
+  endTime   DateTime       @map("end_time")
+  status    ScheduleStatus @default(PENDING) @map("status")
+  date      DateTime       @map("date") @db.Date
+  createdAt DateTime       @default(now()) @map("created_at")
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([date])
+  @@index([userId, date])
+  @@map("schedule_blocks")
+}
+
 model ReplyFeedback {
   id             String   @id @default(uuid()) @map("id")
   emailId        String   @map("email_id")
@@ -120,4 +175,20 @@ enum Status {
   SNOOZED
 
   @@map("status")
+}
+
+enum ScheduleStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  MISSED
+
+  @@map("schedule_status")
+}
+
+enum Provider {
+  GOOGLE
+  MICROSOFT
+
+  @@map("provider")
 }

@@ -46,8 +46,8 @@ export default function Snoozed({ loaderData }: Route.ComponentProps) {
     <main className="mx-auto max-w-3xl px-4 py-8">
       <Link
         to="/dashboard"
-        className="mb-4 inline-block text-[13px] hover:opacity-70"
-        style={{ fontFamily: "var(--font-mono)", color: "var(--color-ink-faint)" }}
+        className="btn btn-link mb-4 text-[13px]"
+        style={{ fontFamily: "var(--font-mono)" }}
       >
         &larr; Back to overview
       </Link>
@@ -112,12 +112,8 @@ export default function Snoozed({ loaderData }: Route.ComponentProps) {
                   <input type="hidden" name="intent" value="cancel" />
                   <button
                     type="submit"
-                    className="cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-80"
-                    style={{
-                      background: "var(--color-line)",
-                      color: "var(--color-ink-soft)",
-                      fontFamily: "var(--font-body)",
-                    }}
+                    className="btn btn-soft px-3 py-1.5 text-xs"
+                    style={{ fontFamily: "var(--font-body)" }}
                   >
                     Un-snooze
                   </button>

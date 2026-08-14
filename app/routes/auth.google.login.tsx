@@ -13,7 +13,9 @@ export async function loader({ request }: Route.LoaderArgs) {
 export default function AuthGoogleLogin() {
   return (
     <Form method="post">
-      <button type="submit">Sign in with Google</button>
+      <button type="submit" className="btn btn-primary px-5 py-2.5 text-sm">
+        Sign in with Google
+      </button>
     </Form>
   );
 }

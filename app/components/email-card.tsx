@@ -48,12 +48,8 @@ export function SnoozeButton({
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        className="cursor-pointer rounded-md px-4 py-2 text-sm font-medium transition-colors hover:opacity-80"
-        style={{
-          background: "var(--color-line)",
-          color: "var(--color-ink-soft)",
-          fontFamily: "var(--font-body)",
-        }}
+        className="btn btn-soft px-4 py-2 text-sm"
+        style={{ fontFamily: "var(--font-body)" }}
       >
         Snooze
       </button>
@@ -72,7 +68,7 @@ export function SnoozeButton({
               key={p.label}
               type="button"
               onClick={() => submit(p.date())}
-              className="block w-full cursor-pointer px-4 py-2 text-left text-sm hover:opacity-70"
+              className="block w-full cursor-pointer px-4 py-2 text-left text-sm transition-colors hover:bg-[var(--color-surface-soft)]"
               style={{
                 fontFamily: "var(--font-body)",
                 color: "var(--color-ink)",
@@ -98,11 +94,8 @@ export function SnoozeButton({
               <button
                 type="button"
                 onClick={() => submit(new Date(customDate))}
-                className="mt-2 w-full cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-white hover:opacity-90"
-                style={{
-                  background: "var(--color-dawn-1)",
-                  fontFamily: "var(--font-body)",
-                }}
+                className="btn btn-primary mt-2 w-full px-3 py-1.5 text-xs"
+                style={{ fontFamily: "var(--font-body)" }}
               >
                 Set custom
               </button>
@@ -297,7 +290,7 @@ export function EmailCard({
               className="mt-2 text-xs font-medium"
               style={{
                 fontFamily: "var(--font-body)",
-                color: "var(--color-dawn-1)",
+                color: "var(--color-brand-blue)",
               }}
             >
               View &amp; Reply &rarr;
@@ -381,7 +374,7 @@ export function EmailCard({
                     color: "var(--color-ink)",
                     border: "1px solid var(--color-line)",
                     background: "var(--color-card)",
-                    ["--tw-ring-color" as string]: "var(--color-dawn-2)",
+                    ["--tw-ring-color" as string]: "var(--color-brand-blue)",
                   }}
                   onClick={(e) => e.stopPropagation()}
                 />
@@ -391,11 +384,8 @@ export function EmailCard({
                 <button
                   type="submit"
                   disabled={isThisCardSending}
-                  className="cursor-pointer rounded-md px-5 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  style={{
-                    background: "var(--color-dawn-1)",
-                    fontFamily: "var(--font-body)",
-                  }}
+                  className="btn btn-primary px-5 py-2 text-sm disabled:opacity-50"
+                  style={{ fontFamily: "var(--font-body)" }}
                 >
                   {isThisCardSending ? "Sending..." : "Send reply"}
                 </button>
@@ -408,12 +398,8 @@ export function EmailCard({
                   <input type="hidden" name="intent" value="dismiss" />
                   <button
                     type="submit"
-                    className="cursor-pointer rounded-md px-5 py-2 text-sm font-medium transition-colors hover:opacity-80"
-                    style={{
-                      background: "var(--color-line)",
-                      color: "var(--color-ink-soft)",
-                      fontFamily: "var(--font-body)",
-                    }}
+                    className="btn btn-soft px-5 py-2 text-sm"
+                    style={{ fontFamily: "var(--font-body)" }}
                   >
                     Dismiss
                   </button>
@@ -464,11 +450,8 @@ export function EmailCard({
                 e.stopPropagation();
                 onToggle();
               }}
-              className="mt-3 cursor-pointer text-xs hover:opacity-70"
-              style={{
-                fontFamily: "var(--font-body)",
-                color: "var(--color-ink-faint)",
-              }}
+              className="btn btn-link mt-3 text-xs"
+              style={{ fontFamily: "var(--font-body)" }}
             >
               Collapse
             </button>

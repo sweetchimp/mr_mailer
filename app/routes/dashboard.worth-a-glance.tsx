@@ -50,8 +50,8 @@ export default function WorthAGlance({ loaderData }: Route.ComponentProps) {
     <main className="mx-auto max-w-3xl px-4 py-8">
       <Link
         to="/dashboard"
-        className="mb-4 inline-block text-[13px] hover:opacity-70"
-        style={{ fontFamily: "var(--font-mono)", color: "var(--color-ink-faint)" }}
+        className="btn btn-link mb-4 text-[13px]"
+        style={{ fontFamily: "var(--font-mono)" }}
       >
         &larr; Back to overview
       </Link>

@@ -18,3 +18,19 @@ export const emailReminderQueue = new Queue("email-reminder", {
     removeOnFail: 20,
   },
 });
+
+export const meetingReminderQueue = new Queue("meeting-reminder", {
+  connection,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 20,
+  },
+});
+
+export const scheduleBlockQueue = new Queue("schedule-block", {
+  connection,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 20,
+  },
+});

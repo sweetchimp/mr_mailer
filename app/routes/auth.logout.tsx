@@ -64,39 +64,16 @@ export default function AuthLogout() {
           <Form method="post">
             <button
               type="submit"
-              style={{
-                padding: "10px 20px",
-                background: "var(--color-dawn-1)",
-                color: "#FFFFFF",
-                borderRadius: "10px",
-                fontFamily: "var(--font-body)",
-                fontWeight: 500,
-                fontSize: "0.875rem",
-                border: "none",
-                cursor: "pointer",
-                transition: "opacity 0.15s",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.9")}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+              className="btn btn-primary px-5 py-2.5 text-sm"
+              style={{ fontFamily: "var(--font-body)" }}
             >
               Yes, log out
             </button>
           </Form>
           <Link
             to="/dashboard"
-            style={{
-              padding: "10px 20px",
-              background: "var(--color-line)",
-              color: "var(--color-ink-soft)",
-              borderRadius: "10px",
-              fontFamily: "var(--font-body)",
-              fontWeight: 500,
-              fontSize: "0.875rem",
-              textDecoration: "none",
-              transition: "opacity 0.15s",
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
-            onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+            className="btn btn-outline px-5 py-2.5 text-sm"
+            style={{ fontFamily: "var(--font-body)" }}
           >
             Cancel
           </Link>

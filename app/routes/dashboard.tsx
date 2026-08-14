@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
-import { Link, Outlet, useFetcher } from "react-router";
+import { Link, NavLink, Outlet, useFetcher } from "react-router";
 import { authMiddleware } from "../middleware/auth.server";
 import { withSessionCookie } from "../lib/session.server";
 import { runDigestPipeline } from "../services/digest.server";
 import { prisma } from "../lib/prisma.server";
 import { userContext } from "../context";
+import { MrMailerLogo } from "../components/MrMailerLogo";
+import { ThemeSwitcher } from "../components/ThemeSwitcher";
 import type { Route } from "./+types/dashboard";
 
 export const middleware = [authMiddleware];
@@ -51,6 +53,7 @@ export interface DashboardLoaderData {
   greeting: string;
   firstName: string;
   tokenRevoked: boolean;
+  provider: "GOOGLE" | "MICROSOFT";
 }
 
 export async function loader({ context }: Route.LoaderArgs) {
@@ -65,6 +68,12 @@ export async function loader({ context }: Route.LoaderArgs) {
     prisma.emailSummary.count({ where: { userId: user.id, status: { in: ["SENT", "DISMISSED"] } } }),
   ]);
 
+  const latestToken = await prisma.oAuthToken.findFirst({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" },
+    select: { provider: true },
+  });
+
   const firstName = user.name?.split(" ")[0] ?? "there";
   const greeting = getGreeting();
 
@@ -74,6 +83,7 @@ export async function loader({ context }: Route.LoaderArgs) {
     greeting,
     firstName,
     tokenRevoked: !!user.tokenRevokedAt,
+    provider: latestToken?.provider ?? "GOOGLE",
   };
 
   return withSessionCookie(data as unknown as Record<string, unknown>, context) as unknown as typeof data;
@@ -86,8 +96,28 @@ export async function action({ request, context }: Route.ActionArgs) {
   if (formData.get("intent") === "refresh") {
     try {
       await runDigestPipeline(user.id);
+      return { success: true };
     } catch (error) {
-      console.error("Refresh failed:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const step = (error as Error & { step?: string }).step ?? "unknown";
+      console.error("Refresh failed:", errorMessage);
+
+      await prisma.jobFailure
+        .create({
+          data: {
+            userId: user.id,
+            jobType: "morning-digest",
+            step,
+            errorMessage,
+            context: JSON.stringify({
+              source: "manual-refresh",
+              timestamp: new Date().toISOString(),
+            }),
+          },
+        })
+        .catch(() => {});
+
+      return { success: false, error: errorMessage };
     }
   }
 
@@ -142,11 +172,8 @@ function VerseModal({ onDismiss }: { onDismiss: () => void }) {
         </p>
         <button
           onClick={onDismiss}
-          className="w-full cursor-pointer rounded-[10px] px-6 py-3 text-sm font-medium text-white transition-opacity hover:opacity-90"
-          style={{
-            background: "var(--color-dawn-1)",
-            fontFamily: "var(--font-body)",
-          }}
+          className="btn btn-primary w-full px-6 py-3 text-sm"
+          style={{ fontFamily: "var(--font-body)" }}
         >
           Begin my morning
         </button>
@@ -156,7 +183,7 @@ function VerseModal({ onDismiss }: { onDismiss: () => void }) {
 }
 
 export default function DashboardLayout({ loaderData }: Route.ComponentProps) {
-  const { counts, greeting, firstName, tokenRevoked } =
+  const { counts, greeting, firstName, tokenRevoked, provider } =
     loaderData as DashboardLoaderData;
   const [verseDismissed, setVerseDismissed] = useState(true);
   const refreshFetcher = useFetcher();
@@ -194,6 +221,13 @@ export default function DashboardLayout({ loaderData }: Route.ComponentProps) {
     day: "numeric",
   });
 
+  useEffect(() => {
+    const data = refreshFetcher.data as { success?: boolean } | undefined;
+    if (refreshFetcher.state === "idle" && data && data.success !== false) {
+      window.location.reload();
+    }
+  }, [refreshFetcher.state, refreshFetcher.data]);
+
   return (
     <div style={{ minHeight: "100vh" }}>
       {!verseDismissed && <VerseModal onDismiss={dismissVerse} />}
@@ -201,80 +235,107 @@ export default function DashboardLayout({ loaderData }: Route.ComponentProps) {
       {/* Masthead */}
       <header
         style={{
-          background: "linear-gradient(100deg, var(--color-dawn-1), var(--color-dawn-2), var(--color-dawn-3))",
-          padding: "32px 24px 28px",
+          background: "var(--color-masthead)",
+          padding: "24px 24px 20px",
         }}
       >
         <div className="mx-auto max-w-3xl">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-9 w-9">
-                <defs>
-                  <linearGradient id="mastGrad" x1="60" y1="74" x2="60" y2="42" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stopColor="#E8A548" />
-                    <stop offset="100%" stopColor="#8C5A63" />
-                  </linearGradient>
-                </defs>
-                <rect x="14" y="32" width="92" height="68" rx="14" stroke="#F5F0E6" strokeWidth="6" fill="none" />
-                <path d="M18 34L60 74L102 34" stroke="#F5F0E6" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-                <circle cx="60" cy="58" r="16" fill="url(#mastGrad)" />
-              </svg>
-              <span
-                className="text-xl"
-                style={{ fontFamily: "var(--font-display)", fontWeight: 500, color: "#FFFFFF" }}
-              >
-                Mr Mailer
-              </span>
+              <MrMailerLogo size={38} light />
             </div>
             <span
               className="text-[11px]"
-              style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.5)" }}
+              style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.6)" }}
             >
               {formattedFullDate}
             </span>
           </div>
 
           <h1
-            className="mt-6 text-[28px] leading-tight"
-            style={{ fontFamily: "var(--font-display)", fontWeight: 500, color: "#FFFFFF" }}
+            className="mt-6 text-[28px] leading-tight font-semibold"
+            style={{ fontFamily: "var(--font-display)", color: "#FFFFFF" }}
           >
             {greeting}, {firstName}.
           </h1>
           <p
             className="mt-1 text-sm"
-            style={{ fontFamily: "var(--font-body)", color: "rgba(255,255,255,0.7)" }}
+            style={{ fontFamily: "var(--font-body)", color: "rgba(255,255,255,0.75)" }}
           >
             Here&apos;s what&apos;s waiting for you today.
           </p>
 
-          {total > 0 && (
-            <div
-              className="mt-4 flex flex-wrap items-center gap-x-2 text-[12px]"
-              style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.5)" }}
-            >
-              {counts.high > 0 && <span>{counts.high} need a reply</span>}
-              {counts.high > 0 && counts.medium > 0 && <span>&middot;</span>}
-              {counts.medium > 0 && <span>{counts.medium} worth a glance</span>}
-              {counts.medium > 0 && counts.low > 0 && <span>&middot;</span>}
-              {counts.low > 0 && <span>{counts.low} fyi</span>}
-              {(counts.high > 0 || counts.medium > 0 || counts.low > 0) && counts.snoozed > 0 && <span>&middot;</span>}
-              {counts.snoozed > 0 && <span>{counts.snoozed} snoozed</span>}
-              <span>&middot;</span>
-              <refreshFetcher.Form method="post">
-                <input type="hidden" name="intent" value="refresh" />
-                <button
-                  type="submit"
-                  disabled={refreshFetcher.state !== "idle"}
-                  className="cursor-pointer border-none bg-transparent p-0 text-[12px] underline decoration-current underline-offset-2 hover:opacity-70 disabled:opacity-40"
-                  style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.5)" }}
-                >
-                  {refreshFetcher.state !== "idle" ? "Refreshing..." : "Refresh now"}
-                </button>
-              </refreshFetcher.Form>
-            </div>
-          )}
+          <div
+            className="mt-4 flex flex-wrap items-center gap-x-2 text-[12px]"
+            style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.5)" }}
+          >
+            {total === 0 && !tokenRevoked ? (
+              <>
+                <span>Digesting your inbox&hellip;</span>
+                <span>&middot;</span>
+                <refreshFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="refresh" />
+                  <button
+                    type="submit"
+                    disabled={refreshFetcher.state !== "idle"}
+                    className="btn cursor-pointer border-none bg-transparent p-0 text-[12px] underline decoration-current underline-offset-2 hover:opacity-70 disabled:opacity-40"
+                    style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.5)" }}
+                  >
+                    {refreshFetcher.state !== "idle" ? "Refreshing..." : "Refresh now"}
+                  </button>
+                </refreshFetcher.Form>
+              </>
+            ) : (
+              <>
+                {counts.high > 0 && <span>{counts.high} need a reply</span>}
+                {counts.high > 0 && counts.medium > 0 && <span>&middot;</span>}
+                {counts.medium > 0 && <span>{counts.medium} worth a glance</span>}
+                {counts.medium > 0 && counts.low > 0 && <span>&middot;</span>}
+                {counts.low > 0 && <span>{counts.low} fyi</span>}
+                {(counts.high > 0 || counts.medium > 0 || counts.low > 0) && counts.snoozed > 0 && <span>&middot;</span>}
+                {counts.snoozed > 0 && <span>{counts.snoozed} snoozed</span>}
+                <span>&middot;</span>
+                <refreshFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="refresh" />
+                  <button
+                    type="submit"
+                    disabled={refreshFetcher.state !== "idle"}
+                    className="btn cursor-pointer border-none bg-transparent p-0 text-[12px] underline decoration-current underline-offset-2 hover:opacity-70 disabled:opacity-40"
+                    style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.5)" }}
+                  >
+                    {refreshFetcher.state !== "idle" ? "Refreshing..." : "Refresh now"}
+                  </button>
+                </refreshFetcher.Form>
+              </>
+            )}
+          </div>
         </div>
       </header>
+
+      {refreshFetcher.data && (refreshFetcher.data as { success?: boolean }).success === false && (
+        <div className="mx-auto max-w-3xl px-4 pt-4">
+          <div
+            className="rounded-r-md border-l-[3px] p-4"
+            style={{
+              background: "var(--color-priority-high-bg)",
+              borderLeftColor: "var(--color-priority-high-line)",
+            }}
+          >
+            <p
+              className="text-sm font-medium"
+              style={{ color: "var(--color-priority-high-text)" }}
+            >
+              Refresh failed
+            </p>
+            <p
+              className="mt-1 text-[13px]"
+              style={{ color: "var(--color-priority-high-text)", opacity: 0.85 }}
+            >
+              {(refreshFetcher.data as { error?: string }).error}
+            </p>
+          </div>
+        </div>
+      )}
 
       {tokenRevoked && (
         <div className="mx-auto max-w-3xl px-4 pt-4">
@@ -289,14 +350,14 @@ export default function DashboardLayout({ loaderData }: Route.ComponentProps) {
               className="text-sm font-medium"
               style={{ color: "var(--color-priority-high-text)" }}
             >
-              Gmail access was revoked. Your daily digest and reply features are paused.
+              Your mailbox connection needs reauthorization. Digest, reply, and reminder features are paused.
             </p>
             <Link
-              to="/auth/google/login"
+              to={`/auth/${provider === "MICROSOFT" ? "microsoft" : "google"}/login`}
               className="mt-2 inline-block text-sm font-medium underline"
               style={{ color: "var(--color-priority-high-text)" }}
             >
-              Reconnect Gmail &rarr;
+              Reconnect {provider === "MICROSOFT" ? "Microsoft" : "Google"} &rarr;
             </Link>
           </div>
         </div>
@@ -304,26 +365,64 @@ export default function DashboardLayout({ loaderData }: Route.ComponentProps) {
 
       <Outlet />
 
-      {/* Footer */}
+      {/* Footer nav */}
       <footer
-        className="mx-auto max-w-3xl px-4 pb-8 pt-4 text-center text-[11px]"
-        style={{ fontFamily: "var(--font-mono)", color: "var(--color-ink-faint)" }}
+        className="mx-auto max-w-3xl px-4 pb-8 pt-4"
+        style={{ fontFamily: "var(--font-mono)" }}
       >
-        <div className="flex items-center justify-center gap-4">
-          <Link
-            to="/admin/job-failures"
-            className="hover:opacity-70"
-            style={{ color: "var(--color-ink-faint)" }}
-          >
-            Job failures
-          </Link>
-          <Link
-            to="/auth/logout"
-            className="hover:opacity-70"
-            style={{ color: "var(--color-ink-faint)" }}
-          >
-            Log out
-          </Link>
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl px-3 py-2"
+          style={{ background: "var(--color-card)", border: "1px solid var(--color-line)" }}
+        >
+          <nav className="flex flex-wrap items-center gap-1" aria-label="Main">
+            <NavLink
+              to="/dashboard"
+              end
+              className={({ isActive }) =>
+                `btn px-3 py-2 text-[12px] ${isActive ? "btn-primary" : "btn-soft"}`
+              }
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              Dashboard
+            </NavLink>
+            <NavLink
+              to="/schedule"
+              className={({ isActive }) =>
+                `btn px-3 py-2 text-[12px] ${isActive ? "btn-primary" : "btn-soft"}`
+              }
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              Schedule
+            </NavLink>
+            <NavLink
+              to="/minutes"
+              className={({ isActive }) =>
+                `btn px-3 py-2 text-[12px] ${isActive ? "btn-primary" : "btn-soft"}`
+              }
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              Minutes
+            </NavLink>
+            <NavLink
+              to="/admin/job-failures"
+              className={({ isActive }) =>
+                `btn px-3 py-2 text-[12px] ${isActive ? "btn-primary" : "btn-soft"}`
+              }
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              Job failures
+            </NavLink>
+          </nav>
+          <div className="flex items-center gap-2">
+            <ThemeSwitcher />
+            <Link
+              to="/auth/logout"
+              className="btn btn-danger px-3 py-2 text-[12px]"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              Log out
+            </Link>
+          </div>
         </div>
       </footer>
     </div>

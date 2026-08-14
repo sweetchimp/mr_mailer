@@ -37,8 +37,12 @@ function extractBody(payload: GmailMessagePart): string | null {
 
 export class GmailProvider implements EmailProvider {
   async getTodaysEmails(userId: string): Promise<EmailMessage[]> {
-    const accessToken = await getValidAccessToken(userId);
+    const accessToken = await this.getValidAccessToken(userId);
     return this.fetchMessages(accessToken);
+  }
+
+  async getValidAccessToken(userId: string): Promise<string> {
+    return getValidAccessToken(userId);
   }
 
   async sendReply(
@@ -53,7 +57,7 @@ export class GmailProvider implements EmailProvider {
       throw new Error("Email summary not found");
     }
 
-    const accessToken = await getValidAccessToken(userId);
+    const accessToken = await this.getValidAccessToken(userId);
 
     const rawMessage = [
       `To: ${summary.sender}`,
@@ -98,7 +102,7 @@ export class GmailProvider implements EmailProvider {
   }
 
   async getFullBody(userId: string, messageId: string): Promise<string> {
-    const accessToken = await getValidAccessToken(userId);
+    const accessToken = await this.getValidAccessToken(userId);
     const res = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -126,7 +130,10 @@ export class GmailProvider implements EmailProvider {
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
 
-    if (!listRes.ok) return [];
+    if (!listRes.ok) {
+      const errorText = await listRes.text();
+      throw new Error(`Gmail API error: ${listRes.status} ${errorText}`);
+    }
 
     const listData = (await listRes.json()) as {
       messages?: { id: string }[];

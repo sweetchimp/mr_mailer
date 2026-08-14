@@ -5,8 +5,10 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLocation,
 } from "react-router";
 
+import { Watermark } from "./components/Watermark";
 import type { Route } from "./+types/root";
 import "./app.css";
 
@@ -19,14 +21,19 @@ export const links: Route.LinksFunction = () => [
   },
   {
     rel: "stylesheet",
-    href: "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,500&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap",
+    href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap",
   },
   { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
   { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32.png" },
   { rel: "icon", type: "image/png", sizes: "16x16", href: "/favicon-16.png" },
 ];
 
+const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem("nuvio-theme");if(!t){t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();`;
+
 export function Layout({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const isLanding = location.pathname === "/";
+
   return (
     <html lang="en">
       <head>
@@ -34,8 +41,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body>
+        {!isLanding && <Watermark />}
         {children}
         <ScrollRestoration />
         <Scripts />
