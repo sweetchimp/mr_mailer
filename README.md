@@ -1,6 +1,6 @@
 # Mr Mailer
 
-Your morning intelligence, simplified. An AI-powered email assistant that fetches your Gmail, summarizes emails with AI, and helps you reply faster.
+Your work, intelligently organized. An AI-powered email assistant that fetches your Gmail or Microsoft 365 inbox, summarizes emails with AI, and helps you reply faster.
 
 ## Features
 

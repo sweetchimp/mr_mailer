@@ -83,7 +83,7 @@ export default function History({ loaderData }: Route.ComponentProps) {
               color: "var(--color-ink)",
               background: "var(--color-card)",
               border: "1px solid var(--color-line)",
-              ["--tw-ring-color" as string]: "var(--color-dawn-2)",
+              ["--tw-ring-color" as string]: "var(--color-brand-blue)",
             }}
           />
 
