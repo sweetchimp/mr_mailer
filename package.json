@@ -39,6 +39,7 @@
     "tsx": "^4.23.1"
   },
   "devDependencies": {
+    "@netlify/vite-plugin-react-router": "^4.0.0",
     "@react-router/dev": "8.0.0",
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^22",

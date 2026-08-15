@@ -90,6 +90,57 @@ npx prisma db push
 npx prisma generate
 ```
 
+## Deploying to Netlify
+
+The web app (React Router SSR) is deployed on Netlify via the
+[`@netlify/vite-plugin-react-router`](https://docs.netlify.com/build/frameworks/framework-setup-guides/react-router/)
+plugin. The background worker must run on a persistent host (Railway / Render /
+Fly.io) — Netlify Functions are short-lived and can't run a long-running BullMQ worker.
+
+### Netlify (web app)
+
+1. Push the repo to GitHub and import it in the Netlify dashboard.
+2. The build config lives in `netlify.toml` (build command `npm run build`,
+   publish dir `build/client`). Netlify detects React Router automatically.
+3. Set the same environment variables as below, with redirect URIs pointed at
+   your Netlify URL:
+
+   ```
+   DATABASE_URL=mysql://user:password@host:3306/mr_mailer?allowPublicKeyRetrieval=true
+   REDIS_URL=redis://...
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   GOOGLE_REDIRECT_URI=https://your-site.netlify.app/auth/google/callback
+   MICROSOFT_CLIENT_ID=...
+   MICROSOFT_CLIENT_SECRET=...
+   MICROSOFT_REDIRECT_URI=https://your-site.netlify.app/auth/microsoft/callback
+   GROQ_API_KEY=...
+   SESSION_SECRET=...
+   RETENTION_DAYS=90
+   ```
+
+4. Add those redirect URIs to your Google / Microsoft OAuth console.
+
+### Railway / Render / Fly.io (worker only)
+
+Keep the existing worker service running:
+
+```bash
+npm run build
+npm run worker
+```
+
+The worker registers the scheduled digest, reminder, meeting, schedule, and
+cleanup jobs on startup, so **deploy it before traffic hits the Netlify site**.
+
+### Notes
+
+- The dashboard "Refresh now" button enqueues a digest job (processed by the
+  worker) instead of running inline, because Netlify Functions have a short
+  execution timeout.
+- The Dockerfile and `railway.json` remain available for running the whole app
+  (web + worker) on a single platform if you prefer.
+
 ## Environment Variables
 
 | Variable | Required | Description |

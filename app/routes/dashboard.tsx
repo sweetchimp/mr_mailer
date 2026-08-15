@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Link, NavLink, Outlet, useFetcher } from "react-router";
 import { authMiddleware } from "../middleware/auth.server";
 import { withSessionCookie } from "../lib/session.server";
-import { runDigestPipeline } from "../services/digest.server";
+import { morningDigestQueue } from "../services/queue.server";
 import { prisma } from "../lib/prisma.server";
 import { userContext } from "../context";
 import { MrMailerLogo } from "../components/MrMailerLogo";
@@ -95,11 +95,18 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   if (formData.get("intent") === "refresh") {
     try {
-      await runDigestPipeline(user.id);
-      return { success: true };
+      await morningDigestQueue.add(
+        `manual-digest-${user.id}`,
+        { userId: user.id },
+        {
+          jobId: `manual-digest-${user.id}`,
+          removeOnComplete: 20,
+          removeOnFail: 20,
+        },
+      );
+      return { success: true, queued: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const step = (error as Error & { step?: string }).step ?? "unknown";
       console.error("Refresh failed:", errorMessage);
 
       await prisma.jobFailure
@@ -107,7 +114,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           data: {
             userId: user.id,
             jobType: "morning-digest",
-            step,
+            step: "queue",
             errorMessage,
             context: JSON.stringify({
               source: "manual-refresh",
@@ -186,6 +193,7 @@ export default function DashboardLayout({ loaderData }: Route.ComponentProps) {
   const { counts, greeting, firstName, tokenRevoked, provider } =
     loaderData as DashboardLoaderData;
   const [verseDismissed, setVerseDismissed] = useState(true);
+  const [digestQueued, setDigestQueued] = useState(false);
   const refreshFetcher = useFetcher();
 
   const todayKey = useMemo(() => {
@@ -222,9 +230,16 @@ export default function DashboardLayout({ loaderData }: Route.ComponentProps) {
   });
 
   useEffect(() => {
-    const data = refreshFetcher.data as { success?: boolean } | undefined;
-    if (refreshFetcher.state === "idle" && data && data.success !== false) {
-      window.location.reload();
+    const data = refreshFetcher.data as { success?: boolean; queued?: boolean } | undefined;
+    if (refreshFetcher.state === "idle" && data) {
+      if (data.success !== false) {
+        if (data.queued) {
+          setDigestQueued(true);
+          const t = setTimeout(() => window.location.reload(), 15000);
+          return () => clearTimeout(t);
+        }
+        window.location.reload();
+      }
     }
   }, [refreshFetcher.state, refreshFetcher.data]);
 
@@ -277,11 +292,15 @@ export default function DashboardLayout({ loaderData }: Route.ComponentProps) {
                   <input type="hidden" name="intent" value="refresh" />
                   <button
                     type="submit"
-                    disabled={refreshFetcher.state !== "idle"}
+                    disabled={refreshFetcher.state !== "idle" || digestQueued}
                     className="btn cursor-pointer border-none bg-transparent p-0 text-[12px] underline decoration-current underline-offset-2 hover:opacity-70 disabled:opacity-40"
                     style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.5)" }}
                   >
-                    {refreshFetcher.state !== "idle" ? "Refreshing..." : "Refresh now"}
+                    {refreshFetcher.state !== "idle"
+                      ? "Refreshing..."
+                      : digestQueued
+                        ? "Digesting..."
+                        : "Refresh now"}
                   </button>
                 </refreshFetcher.Form>
               </>
@@ -299,11 +318,15 @@ export default function DashboardLayout({ loaderData }: Route.ComponentProps) {
                   <input type="hidden" name="intent" value="refresh" />
                   <button
                     type="submit"
-                    disabled={refreshFetcher.state !== "idle"}
+                    disabled={refreshFetcher.state !== "idle" || digestQueued}
                     className="btn cursor-pointer border-none bg-transparent p-0 text-[12px] underline decoration-current underline-offset-2 hover:opacity-70 disabled:opacity-40"
                     style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.5)" }}
                   >
-                    {refreshFetcher.state !== "idle" ? "Refreshing..." : "Refresh now"}
+                    {refreshFetcher.state !== "idle"
+                      ? "Refreshing..."
+                      : digestQueued
+                        ? "Digesting..."
+                        : "Refresh now"}
                   </button>
                 </refreshFetcher.Form>
               </>

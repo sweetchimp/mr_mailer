@@ -7,6 +7,9 @@
 /.react-router/
 /build/
 
+# Netlify
+/.netlify/
+
 /prisma/dev.db
 
 /generated/prisma
