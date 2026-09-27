@@ -1,0 +1,264 @@
+@import "tailwindcss";
+
+@theme {
+  /* Font families.
+     Aliased to the next/font CSS variables that src/app/layout.tsx puts on
+     <html>. Naming the literal "Inter" / "IBM Plex Mono" families here would
+     silently resolve to nothing — next/font self-hosts the font files under
+     generated family names — so every var(--font-display) / var(--font-mono)
+     fell back to the system stack. */
+  --font-display: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "Cascadia Code", monospace;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+
+  /* Mr Mailer brand colors */
+  --color-brand-navy: #071A49;
+  --color-brand-blue: #155EEF;
+  --color-brand-bright: #168AFF;
+  --color-brand-cyan: #22D3EE;
+  --color-brand-violet: #6D5DFB;
+  --color-brand-purple: #7C3AED;
+
+  /* Light theme surface tokens */
+  --color-bg: #F7F9FC;
+  --color-surface: #FFFFFF;
+  --color-surface-soft: #EEF5FF;
+  --color-surface-elevated: #FFFFFF;
+  --color-ink: #0B1B3D;
+  --color-ink-soft: #64748B;
+  --color-ink-faint: #94A3B8;
+  --color-line: #E2E8F0;
+  --color-card: #FFFFFF;
+  --color-paper: #F7F9FC;
+  --color-paper-end: #EEF3FA;
+
+  /* Priority: high (violet) */
+  --color-priority-high-bg: #EFECFF;
+  --color-priority-high-text: #5A4BD1;
+  --color-priority-high-line: #C9C2F5;
+
+  /* Priority: medium (blue) */
+  --color-priority-medium-bg: #E8F0FF;
+  --color-priority-medium-text: #155EEF;
+  --color-priority-medium-line: #B6CDFA;
+
+  /* Priority: low (cyan) */
+  --color-priority-low-bg: #E4FAFD;
+  --color-priority-low-text: #0E7D93;
+  --color-priority-low-line: #A8E2EC;
+}
+
+/* Composite gradient tokens — kept outside @theme so they are never tree-shaken */
+:root {
+  /* Mr Mailer brand color tokens */
+  --color-brand-navy: #071A49;
+  --color-brand-blue: #155EEF;
+  --color-brand-bright: #168AFF;
+  --color-brand-cyan: #22D3EE;
+  --color-brand-violet: #6D5DFB;
+  --color-brand-purple: #7C3AED;
+
+  /* Masthead gradient (deep navy → blue → violet) */
+  --color-masthead-1: #071A49;
+  --color-masthead-2: #155EEF;
+  --color-masthead-3: #6D5DFB;
+  --color-masthead: linear-gradient(120deg, var(--color-masthead-1) 0%, var(--color-masthead-2) 55%, var(--color-masthead-3) 100%);
+
+  /* Signature brand gradient — use sparingly */
+  --color-brand-gradient: linear-gradient(135deg, #155EEF 0%, #168AFF 33%, #22D3EE 66%, #6D5DFB 100%);
+}
+
+/* Dark theme tokens */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: #07111F;
+  --color-surface: #0D1B2E;
+  --color-surface-soft: #12243D;
+  --color-surface-elevated: #16294A;
+  --color-ink: #E2E8F0;
+  --color-ink-soft: #94A3B8;
+  --color-ink-faint: #64748B;
+  --color-line: #1E2B44;
+  --color-card: #0D1B2E;
+  --color-paper: #07111F;
+  --color-paper-end: #0A1626;
+
+  --color-priority-high-bg: #241F4D;
+  --color-priority-high-text: #C9C2F5;
+  --color-priority-high-line: #4A3FA6;
+
+  --color-priority-medium-bg: #13264D;
+  --color-priority-medium-text: #A8C4FF;
+  --color-priority-medium-line: #155EEF;
+
+  --color-priority-low-bg: #0E2B35;
+  --color-priority-low-text: #9FDFE9;
+  --color-priority-low-line: #0E7D93;
+}
+
+/* System dark (unless user forced light) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --color-bg: #07111F;
+    --color-surface: #0D1B2E;
+    --color-surface-soft: #12243D;
+    --color-surface-elevated: #16294A;
+    --color-ink: #E2E8F0;
+    --color-ink-soft: #94A3B8;
+    --color-ink-faint: #64748B;
+    --color-line: #1E2B44;
+    --color-card: #0D1B2E;
+    --color-paper: #07111F;
+    --color-paper-end: #0A1626;
+
+    --color-priority-high-bg: #241F4D;
+    --color-priority-high-text: #C9C2F5;
+    --color-priority-high-line: #4A3FA6;
+
+    --color-priority-medium-bg: #13264D;
+    --color-priority-medium-text: #A8C4FF;
+    --color-priority-medium-line: #155EEF;
+
+    --color-priority-low-bg: #0E2B35;
+    --color-priority-low-text: #9FDFE9;
+    --color-priority-low-line: #0E7D93;
+  }
+}
+
+/* Light override wins over system */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+html,
+body {
+  background: linear-gradient(180deg, var(--color-paper) 0%, var(--color-paper-end) 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  color: var(--color-ink);
+  font-family: var(--font-body);
+}
+
+/* Button system */
+@layer components {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: none;
+    border-radius: 10px;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    text-decoration: none;
+    transition:
+      transform 0.12s ease,
+      box-shadow 0.12s ease,
+      opacity 0.12s ease,
+      background-color 0.12s ease,
+      border-color 0.12s ease,
+      color 0.12s ease;
+  }
+
+  .btn:hover {
+    transform: translateY(-1px);
+  }
+
+  .btn:active {
+    transform: translateY(0);
+  }
+
+  .btn:focus-visible {
+    outline: 2px solid var(--color-brand-blue);
+    outline-offset: 2px;
+  }
+
+  .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .btn-primary {
+    background: var(--color-brand-blue);
+    color: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  }
+
+  .btn-primary:hover {
+    background: var(--color-brand-bright);
+  }
+
+  .btn-outline {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    color: var(--color-ink-soft);
+  }
+
+  .btn-outline:hover {
+    border-color: var(--color-brand-blue);
+    color: var(--color-brand-blue);
+  }
+
+  .btn-soft {
+    background: var(--color-surface-soft);
+    color: var(--color-ink-soft);
+  }
+
+  .btn-soft:hover {
+    background: color-mix(in srgb, var(--color-surface-soft) 78%, var(--color-ink-soft));
+    color: var(--color-ink);
+  }
+
+  .btn-danger {
+    background: var(--color-priority-high-bg);
+    color: var(--color-priority-high-text);
+  }
+
+  .btn-danger:hover {
+    background: color-mix(in srgb, var(--color-priority-high-bg) 82%, var(--color-priority-high-text));
+  }
+
+  .btn-link {
+    background: transparent;
+    color: var(--color-ink-soft);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    padding: 0;
+  }
+
+  .btn-link:hover {
+    color: var(--color-brand-blue);
+    transform: translateY(-1px);
+  }
+}
+
+/* Text on the brand/masthead gradient */
+.text-masthead {
+  color: #ffffff;
+}
+
+@keyframes brandFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

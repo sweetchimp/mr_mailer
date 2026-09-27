@@ -6,10 +6,46 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: devpassword
       MYSQL_DATABASE: mr_mailer
+      MYSQL_USER: mr_mailer_app
+      MYSQL_PASSWORD: devpassword
     ports:
       - "3306:3306"
     volumes:
       - mr_mysql_data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    container_name: mr_mailer_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  web:
+    build: .
+    container_name: mr_mailer_web
+    restart: unless-stopped
+    depends_on:
+      - mysql
+      - redis
+    environment:
+      DATABASE_URL: mysql://mr_mailer_app:devpassword@mysql:3306/mr_mailer
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+
+  worker:
+    build: .
+    container_name: mr_mailer_worker
+    restart: unless-stopped
+    depends_on:
+      - mysql
+      - redis
+    command: npm run worker
+    environment:
+      DATABASE_URL: mysql://mr_mailer_app:devpassword@mysql:3306/mr_mailer
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
 
 volumes:
   mr_mysql_data:
