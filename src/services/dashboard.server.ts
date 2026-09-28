@@ -45,6 +45,21 @@ export async function getProviderForUser(userId: string): Promise<Provider> {
   return token?.provider ?? "GOOGLE";
 }
 
+/**
+ * The most recent AI-summarization failure for this user, if any. The dashboard
+ * renders this so a provider outage (bad key, decommissioned model, outage)
+ * appears as a named problem instead of six silently zeroed buckets.
+ */
+export async function getLatestSummarizationFailure(
+  userId: string,
+): Promise<{ errorMessage: string; createdAt: Date } | null> {
+  return prisma.jobFailure.findFirst({
+    where: { userId, step: "ai-summarization" },
+    orderBy: { createdAt: "desc" },
+    select: { errorMessage: true, createdAt: true },
+  });
+}
+
 /** Only called for users with no summaries yet, to avoid an unbounded list. */
 const MAX_LIST_SIZE = 200;
 

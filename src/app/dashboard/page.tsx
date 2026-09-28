@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/current-session.server";
 import {
   getDashboardCounts,
+  getLatestSummarizationFailure,
   getProviderForUser,
 } from "@/services/dashboard.server";
 import { getTodaysEvents } from "@/services/calendar.server";
@@ -9,9 +10,10 @@ import { StatTile } from "@/components/stat-tile";
 export default async function DashboardIndex() {
   const user = await requireUser();
 
-  const [counts, provider] = await Promise.all([
+  const [counts, provider, aiFailure] = await Promise.all([
     getDashboardCounts(user.id),
     getProviderForUser(user.id),
+    getLatestSummarizationFailure(user.id),
   ]);
 
   const tokenRevoked = !!user.tokenRevokedAt;
@@ -44,7 +46,17 @@ export default async function DashboardIndex() {
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
-      {total === 0 && !tokenRevoked && (
+      {aiFailure && total === 0 && (
+        <p
+          className="mb-4 text-center text-sm"
+          style={{ fontFamily: "var(--font-body)", color: "var(--color-danger, #b3261e)" }}
+        >
+          AI summarization is failing, so nothing could be filed.{" "}
+          {aiFailure.errorMessage} — press Refresh to retry.
+        </p>
+      )}
+
+      {total === 0 && !aiFailure && (
         <p
           className="mb-4 text-center text-sm"
           style={{ fontFamily: "var(--font-body)", color: "var(--color-ink-faint)" }}
