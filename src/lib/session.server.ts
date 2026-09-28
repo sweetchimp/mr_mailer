@@ -3,7 +3,25 @@ import type { JWTPayload } from "jose";
 import { getSessionSecret } from "./env.server";
 import { SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from "./session-cookie";
 
-const secretKey = new TextEncoder().encode(getSessionSecret());
+/**
+ * Derived lazily, and that is load-bearing rather than a micro-optimisation.
+ *
+ * `next build` imports every route module to collect page data, and it runs with
+ * NODE_ENV=production. Evaluating `getSessionSecret()` at module scope meant that
+ * merely importing this file threw when no SESSION_SECRET was present, so the
+ * Docker build failed outright — `.dockerignore` excludes `.env` on purpose, and
+ * a build has no business needing a runtime secret. Deferring the read means
+ * importing is free and only actually signing or verifying a session requires the
+ * secret, which is where the check belongs.
+ */
+let cachedSecretKey: Uint8Array | null = null;
+
+function secretKey(): Uint8Array {
+  if (!cachedSecretKey) {
+    cachedSecretKey = new TextEncoder().encode(getSessionSecret());
+  }
+  return cachedSecretKey;
+}
 
 export interface SessionData {
   userId: string;
@@ -23,12 +41,12 @@ export async function signSession(data: SessionData): Promise<string> {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_MAX_AGE_SECONDS}s`)
-    .sign(secretKey);
+    .sign(secretKey());
 }
 
 export async function verifySession(token: string): Promise<SessionData | null> {
   try {
-    const { payload } = await jwtVerify(token, secretKey);
+    const { payload } = await jwtVerify(token, secretKey());
     const userId = payload.userId;
     if (typeof userId !== "string" || userId.length === 0) return null;
     return {

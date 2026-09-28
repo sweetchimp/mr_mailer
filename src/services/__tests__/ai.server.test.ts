@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { mockGroqCreate, mockFindMany, mockFindUnique, mockUpsert } = vi.hoisted(() => ({
   mockGroqCreate: vi.fn(),
@@ -102,6 +102,47 @@ describe("summarizeEmails (AI summary parsing)", () => {
     mockGroqCreate.mockReset();
     mockFindMany.mockResolvedValue([]);
     mockFindUnique.mockResolvedValue(null);
+    // The Groq client is built on first use rather than at import time, so the
+    // key has to be present when a test actually calls the API — which is what
+    // makes the missing-key path below a real assertion rather than an
+    // import-time accident.
+    process.env.GROQ_API_KEY = "test-key";
+    process.env.GROQ_MODEL = "test-model";
+  });
+
+  afterEach(() => {
+    delete process.env.GROQ_API_KEY;
+    delete process.env.GROQ_MODEL;
+  });
+
+  it("names the missing key when no API key is configured", async () => {
+    delete process.env.GROQ_API_KEY;
+
+    await expect(summarizeEmails("user-1", [baseEmail])).rejects.toThrow(
+      /GROQ_API_KEY/,
+    );
+  });
+
+  it("uses the configured model rather than a hardcoded one", async () => {
+    mockGroqCreate.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              priority: "HIGH",
+              summaryText: "Asked to meet tomorrow at 3pm.",
+              suggestedReply: "Sure, see you then.",
+            }),
+          },
+        },
+      ],
+    });
+
+    await summarizeEmails("user-1", [baseEmail]);
+
+    expect(mockGroqCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "test-model" }),
+    );
   });
 
   it("parses a valid AI response correctly", async () => {

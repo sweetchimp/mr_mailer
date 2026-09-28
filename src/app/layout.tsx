@@ -1,17 +1,31 @@
 import type { Metadata } from "next";
-import { Inter, IBM_Plex_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
-const inter = Inter({
+// Fonts are vendored in this repo rather than pulled from `next/font/google`.
+// The Google loader downloads from fonts.gstatic.com at build time, which made
+// `docker build` depend on live egress to Google; a hermetic image build is
+// worth the directory of OFL-licensed .woff2 files sitting next to this file.
+const inter = localFont({
   variable: "--font-inter",
-  subsets: ["latin"],
+  src: "./fonts/inter-latin-wght-normal.woff2",
   display: "swap",
 });
 
-const plexMono = IBM_Plex_Mono({
+const plexMono = localFont({
   variable: "--font-plex-mono",
-  weight: ["400", "500"],
-  subsets: ["latin"],
+  src: [
+    {
+      path: "./fonts/ibm-plex-mono-latin-400-normal.woff2",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "./fonts/ibm-plex-mono-latin-500-normal.woff2",
+      weight: "500",
+      style: "normal",
+    },
+  ],
   display: "swap",
 });
 

@@ -8,7 +8,31 @@ import {
 import type { Priority } from "@prisma/client";
 import type { EmailMessage } from "./email-provider.server";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
+/**
+ * Constructed lazily, and that is load-bearing rather than a micro-optimisation.
+ *
+ * `new Groq({ apiKey })` throws when the key is missing, so evaluating it at
+ * module scope meant that merely importing this file failed the Docker build:
+ * `next build` imports every route module to collect page data with
+ * NODE_ENV=production, and `.dockerignore` keeps `.env` out of the image. A
+ * build has no business needing a live API key, so the client is created on
+ * first use, where a missing key is a real runtime configuration error and gets
+ * reported as one by the caller.
+ */
+let cachedGroq: Groq | null = null;
+
+function groq(): Groq {
+  if (!cachedGroq) {
+    const apiKey = process.env.GROQ_API_KEY?.trim();
+    if (!apiKey) {
+      throw new Error(
+        "GROQ_API_KEY is missing or empty. Summarization cannot run without it.",
+      );
+    }
+    cachedGroq = new Groq({ apiKey });
+  }
+  return cachedGroq;
+}
 
 /**
  * Groq retires models without much notice: `llama-3.3-70b-versatile` was
@@ -16,8 +40,13 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
  * valid key into a wall of 404s. Keep the model in the environment so the next
  * deprecation is a `.env` edit rather than a code change. Confirm what your key
  * can reach with `GET https://api.groq.com/openai/v1/models`.
+ *
+ * Read per call rather than captured at import time, so a value set after this
+ * module loads is still honoured.
  */
-const GROQ_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
+function groqModel(): string {
+  return process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
+}
 
 interface EmailSummaryResult {
   priority: "HIGH" | "MEDIUM" | "LOW";
@@ -39,8 +68,9 @@ async function summarizeEmail(
     ? stripped.slice(-MAX_BODY_CHARS)
     : stripped;
 
-  const response = await groq.chat.completions.create({
-    model: GROQ_MODEL,
+  const model = groqModel();
+  const response = await groq().chat.completions.create({
+    model,
     response_format: { type: "json_object" },
     temperature: 0.3,
     max_tokens: 512,
@@ -122,7 +152,7 @@ export async function summarizeEmails(
         if (!result) {
           failed++;
           console.error(
-            `[ai] ${GROQ_MODEL} returned no usable summary for ${email.id} (${email.subject})`,
+            `[ai] ${groqModel()} returned no usable summary for ${email.id} (${email.subject})`,
           );
           return { ...email, summary: null };
         }

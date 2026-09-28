@@ -27,10 +27,22 @@ services:
     depends_on:
       - mysql
       - redis
+    # Secrets live in the host's .env, which is excluded from the image by
+    # .dockerignore, so they are injected at run time rather than baked in.
+    # Without this the container sets NODE_ENV=production and getSessionSecret()
+    # throws on the missing SESSION_SECRET, so it crash-loops before serving.
+    env_file:
+      - .env
     environment:
+      # These override env_file so the containers talk to the compose services
+      # rather than to localhost, which is a different host inside a container.
       DATABASE_URL: mysql://mr_mailer_app:devpassword@mysql:3306/mr_mailer
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      # Node inside the image defaults to UTC; both the digest cron schedule and
+      # the dashboard's meeting times are derived from Intl's resolved zone.
+      TZ: Europe/Budapest
     ports:
       - "3000:3000"
 
@@ -42,10 +54,15 @@ services:
       - mysql
       - redis
     command: npm run worker
+    # The worker decrypts stored OAuth tokens and calls Groq, so it needs the
+    # same secrets as the web container.
+    env_file:
+      - .env
     environment:
       DATABASE_URL: mysql://mr_mailer_app:devpassword@mysql:3306/mr_mailer
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
+      TZ: Europe/Budapest
 
 volumes:
   mr_mysql_data:
