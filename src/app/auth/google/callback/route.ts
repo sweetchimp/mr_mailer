@@ -7,10 +7,18 @@ import {
 import { sessionCookie, signSession } from "@/lib/session.server";
 import { runPostLogin } from "@/lib/auth-callback.server";
 
+const PROVIDER = "GOOGLE";
+
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const code = searchParams.get("code");
   const state = searchParams.get("state");
+  // Google redirects back with ?error=... rather than rendering its own page
+  // when the request is refused for a consent reason. Previously we only
+  // checked for a missing `code`, so every such denial collapsed into a
+  // generic `oauth_failed` with the actual reason thrown away.
+  const providerError = searchParams.get("error");
+  const providerErrorDescription = searchParams.get("error_description");
 
   const loginUrl = new URL("/login", request.url);
   const oauthState = decodeStateCookie(request.headers.get("Cookie"));
@@ -28,14 +36,22 @@ export async function GET(request: NextRequest) {
   }
 
   if (!code) {
-    loginUrl.searchParams.set("error", "oauth_failed");
+    if (providerError) {
+      console.error(
+        `[oauth] ${PROVIDER} authorize refused: ${providerError}`,
+        providerErrorDescription ?? "",
+      );
+      loginUrl.searchParams.set("error", providerError);
+    } else {
+      loginUrl.searchParams.set("error", "oauth_failed");
+    }
     const res = NextResponse.redirect(loginUrl);
     res.headers.append("Set-Cookie", clearStateCookie());
     return res;
   }
 
   try {
-    const user = await completeAuth("GOOGLE", code, oauthState.codeVerifier);
+    const user = await completeAuth(PROVIDER, code, oauthState.codeVerifier);
     const token = await signSession({
       userId: user.id,
       lastActivity: Date.now(),
@@ -47,7 +63,13 @@ export async function GET(request: NextRequest) {
     res.headers.append("Set-Cookie", sessionCookie(token));
     res.headers.append("Set-Cookie", clearStateCookie());
     return res;
-  } catch {
+  } catch (error) {
+    // Log the real cause. Without this, every failure looks identical from the
+    // outside and there is nothing to go on when debugging a failed sign-in.
+    console.error(
+      `[oauth] ${PROVIDER} callback failed:`,
+      error instanceof Error ? error.stack ?? error.message : error,
+    );
     loginUrl.searchParams.set("error", "oauth_failed");
     const res = NextResponse.redirect(loginUrl);
     res.headers.append("Set-Cookie", clearStateCookie());

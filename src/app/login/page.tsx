@@ -8,6 +8,48 @@ type LoginPageProps = {
   searchParams: Promise<{ error?: string }>;
 };
 
+/**
+ * Both providers redirect back with an `error` code when they refuse a request,
+ * and the OAuth callbacks forward that code verbatim. Mapping them here turns a
+ * silent bounce into something actionable — the console-side causes below are
+ * the ones that actually bite during local development.
+ */
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  invalid_state: "Sign-in could not be verified. Please try again.",
+  oauth_failed: "Sign-in failed. Please try again.",
+
+  // Consent / account level
+  access_denied:
+    "Access was denied. If this account is a personal Gmail, add it as a test user on the OAuth consent screen (up to 100 accounts are allowed).",
+  consent_required: "Consent is required. Please try signing in again.",
+  interaction_required: "Extra sign-in steps are required. Please try again.",
+  login_required: "Please sign in again to continue.",
+
+  // Client configuration level
+  redirect_uri_mismatch:
+    "The redirect URI is not registered on this OAuth client. Add http://localhost:3000/auth/google/callback (or the microsoft equivalent) under Authorized redirect URIs, then try again.",
+  unauthorized_client:
+    "This OAuth client is not authorized for the request. Check that the client type and consent screen are configured.",
+  invalid_scope:
+    "The requested permissions are not available for this client. Check the scopes enabled on the OAuth client and the consent screen.",
+
+  // Transient
+  server_error: "The provider returned a server error. Please try again.",
+  temporarily_unavailable:
+    "The provider is temporarily unavailable. Please try again.",
+};
+
+function describeError(error: string | undefined): string | null {
+  if (!error) return null;
+  // Never echo the raw code for anything unrecognised — an unknown value is
+  // either a provider string we have not mapped or something unexpected, and
+  // neither should be rendered as-is into the page.
+  return (
+    OAUTH_ERROR_MESSAGES[error] ??
+    "Sign-in could not be completed. Please try again."
+  );
+}
+
 export default async function Login({ searchParams }: LoginPageProps) {
   const { error } = await searchParams;
 
@@ -19,12 +61,7 @@ export default async function Login({ searchParams }: LoginPageProps) {
 
   if (session?.userId) redirect("/dashboard");
 
-  const errorMessage =
-    error === "invalid_state"
-      ? "Sign-in could not be verified. Please try again."
-      : error === "oauth_failed"
-        ? "Sign-in failed. Please try again."
-        : null;
+  const errorMessage = describeError(error);
 
   return (
     <div
