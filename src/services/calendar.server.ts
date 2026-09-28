@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma.server";
 import { getValidAccessToken } from "../lib/google-auth.server";
+import { startOfLocalDay } from "../lib/date.server";
 
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 const CALENDAR_API =
@@ -76,8 +77,11 @@ export async function getTodaysEvents(userId: string): Promise<CalendarEvent[]> 
   const accessToken = await getValidAccessToken(userId);
 
   const now = new Date();
-  const timeMin = new Date(now);
-  timeMin.setHours(0, 0, 0, 0);
+  // The whole local day rather than up to now: a meeting later this afternoon
+  // still belongs on the dashboard. This is why the calendar window differs
+  // from the digest's, which stops at now because mail cannot arrive in the
+  // future.
+  const timeMin = startOfLocalDay(now);
   const timeMax = new Date(now);
   timeMax.setHours(23, 59, 59, 999);
 

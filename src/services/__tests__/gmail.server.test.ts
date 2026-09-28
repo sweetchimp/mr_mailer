@@ -208,3 +208,145 @@ describe("GmailProvider.getFullBody", () => {
     );
   });
 });
+
+describe("GmailProvider.getTodaysEmails", () => {
+  const provider = new GmailProvider();
+
+  /**
+   * The provider filters against the real clock, so a fixed timestamp would go
+   * stale. Build times relative to the actual day boundary instead: `midToday`
+   * is always inside [midnight, now], even when the suite runs at 00:01.
+   */
+  const now = new Date();
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const midToday = Math.floor(dayStart + (now.getTime() - dayStart) / 2);
+  const yesterday = dayStart - 60 * 60 * 1000;
+  const justAfterNow = now.getTime() + 60 * 60 * 1000;
+
+  interface FakeMessage {
+    id: string;
+    internalDate?: string;
+    subject?: string;
+    /** Simulate the per-message metadata request failing. */
+    fail?: boolean;
+  }
+
+  function stubGmail(messages: FakeMessage[]) {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/messages?")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ messages: messages.map((m) => ({ id: m.id })) }),
+        };
+      }
+      const id = decodeURIComponent(url.match(/\/messages\/([^?]+)\?/)?.[1] ?? "");
+      const found = messages.find((m) => m.id === id);
+      if (found?.fail) {
+        return { ok: false, status: 500, text: async () => "boom" };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: found!.id,
+          threadId: `thread-${found!.id}`,
+          snippet: "snippet",
+          internalDate: found!.internalDate,
+          payload: {
+            headers: [{ name: "Subject", value: found!.subject ?? "no subject" }],
+          },
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  beforeEach(() => {
+    mockGetValidAccessToken.mockResolvedValue("test-access-token");
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps only messages received today", async () => {
+    stubGmail([
+      { id: "today-1", internalDate: String(midToday), subject: "Today" },
+      { id: "yesterday-1", internalDate: String(yesterday), subject: "Yesterday" },
+      { id: "today-2", internalDate: String(midToday), subject: "Also today" },
+    ]);
+
+    const emails = await provider.getTodaysEmails("user-1");
+
+    expect(emails.map((e) => e.id).sort()).toEqual(["today-1", "today-2"]);
+    expect(emails.map((e) => e.subject)).not.toContain("Yesterday");
+  });
+
+  it("excludes messages dated in the future", async () => {
+    stubGmail([{ id: "future", internalDate: String(justAfterNow) }]);
+
+    await expect(provider.getTodaysEmails("user-1")).resolves.toEqual([]);
+  });
+
+  it("searches with an after: bound rather than taking the newest N", async () => {
+    const fetchMock = stubGmail([
+      { id: "today-1", internalDate: String(midToday) },
+    ]);
+
+    await provider.getTodaysEmails("user-1");
+
+    const listUrl = new URL(fetchMock.mock.calls[0][0] as string);
+    // Assert the decoded param, not the raw string: URLSearchParams also
+    // percent-encodes the slashes in the date.
+    expect(listUrl.searchParams.get("q")).toMatch(/^after:\d{4}\/\d{2}\/\d{2}$/);
+    expect(listUrl.searchParams.get("maxResults")).toBe("15");
+  });
+
+  it("caps the result at five summaries", async () => {
+    stubGmail(
+      Array.from({ length: 9 }, (_, i) => ({
+        id: `today-${i}`,
+        internalDate: String(midToday),
+      })),
+    );
+
+    const emails = await provider.getTodaysEmails("user-1");
+
+    expect(emails).toHaveLength(5);
+  });
+
+  it("drops a message whose metadata request fails", async () => {
+    stubGmail([
+      { id: "ok", internalDate: String(midToday), subject: "Readable" },
+      { id: "broken", internalDate: String(midToday), fail: true },
+    ]);
+
+    const emails = await provider.getTodaysEmails("user-1");
+
+    // Previously this produced a placeholder row titled "(error loading)".
+    expect(emails.map((e) => e.id)).toEqual(["ok"]);
+  });
+
+  it("returns an empty array for an empty result set", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) }),
+    );
+
+    await expect(provider.getTodaysEmails("user-1")).resolves.toEqual([]);
+  });
+
+  it("surfaces a Gmail API failure rather than returning an empty inbox", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 403, text: async () => "quota" }),
+    );
+
+    await expect(provider.getTodaysEmails("user-1")).rejects.toThrow(
+      "Gmail API error: 403",
+    );
+  });
+});

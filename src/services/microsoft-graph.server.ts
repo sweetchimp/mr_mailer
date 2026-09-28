@@ -1,4 +1,5 @@
 import { getMicrosoftAccessToken } from "../lib/microsoft-auth.server";
+import { currentDayWindow } from "../lib/date.server";
 import type { EmailMessage, EmailProvider } from "./email-provider.server";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -48,11 +49,16 @@ export class MicrosoftGraphProvider implements EmailProvider {
 
   async getTodaysEmails(userId: string): Promise<EmailMessage[]> {
     const accessToken = await this.getValidAccessToken(userId);
+    const window = currentDayWindow();
 
+    // Graph's receivedDateTime is UTC and is a server-assigned value, so unlike
+    // Gmail this can be filtered exactly in the query rather than scanning a
+    // wider result set and discarding most of it.
     const params = new URLSearchParams({
       $top: String(MAX_EMAILS),
       $orderby: "receivedDateTime desc",
       $select: "id,conversationId,subject,from,bodyPreview,receivedDateTime",
+      $filter: `receivedDateTime ge ${window.start.toISOString()} and receivedDateTime le ${window.end.toISOString()}`,
     });
 
     const res = await fetch(`${GRAPH_BASE}/me/messages?${params.toString()}`, {

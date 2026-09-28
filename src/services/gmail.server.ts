@@ -1,11 +1,28 @@
 import { getValidAccessToken } from "../lib/google-auth.server";
 import { prisma } from "../lib/prisma.server";
+import pLimit from "p-limit";
+import {
+  currentDayWindow,
+  isWithinWindow,
+  toGmailDate,
+  type DateWindow,
+} from "../lib/date.server";
 import {
   decodeHtmlEntities,
   stripQuotedReplies,
   MAX_BODY_CHARS,
 } from "../lib/utils.server";
 import type { EmailMessage, EmailProvider } from "./email-provider.server";
+
+/** How many summaries the digest will hold in one run. */
+const MAX_EMAILS = 5;
+/**
+ * How many messages to pull from the Gmail search before filtering. The
+ * search lower bound is a whole day wide to absorb Gmail's Pacific-Time date
+ * handling, so a busy inbox needs a wider net than the number of emails we
+ * intend to keep.
+ */
+const SCAN_LIMIT = 15;
 
 interface GmailMessagePart {
   partId: string;
@@ -38,7 +55,7 @@ function extractBody(payload: GmailMessagePart): string | null {
 export class GmailProvider implements EmailProvider {
   async getTodaysEmails(userId: string): Promise<EmailMessage[]> {
     const accessToken = await this.getValidAccessToken(userId);
-    return this.fetchMessages(accessToken);
+    return this.fetchMessages(accessToken, currentDayWindow());
   }
 
   async getValidAccessToken(userId: string): Promise<string> {
@@ -123,9 +140,20 @@ export class GmailProvider implements EmailProvider {
 
   private async fetchMessages(
     accessToken: string,
+    window: DateWindow,
   ): Promise<EmailMessage[]> {
+    // Deliberately over-fetch by one day. Gmail resolves bare `after:` dates in
+    // Pacific Time, so a local-midnight start either side of that boundary
+    // would drop mail that genuinely arrived today; the exact filter is applied
+    // below using Gmail's own receipt timestamp.
+    const searchAfter = toGmailDate(new Date(window.start.getTime() - 24 * 60 * 60 * 1000));
+    const params = new URLSearchParams({
+      q: `after:${searchAfter}`,
+      maxResults: String(SCAN_LIMIT),
+    });
+
     const listRes = await fetch(
-      "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=5",
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
 
@@ -140,56 +168,68 @@ export class GmailProvider implements EmailProvider {
 
     if (!listData.messages) return [];
 
-    return Promise.all(
-      listData.messages.map(async (msg) => {
-        const msgRes = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata`,
-          {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              Accept: "application/json",
+    // Concurrency is capped: this is one request per candidate message, and an
+    // unbounded Promise.all over 15 of them is a good way to hit Gmail's
+    // per-project rate limit.
+    const limit = pLimit(5);
+
+    const candidates = await Promise.all(
+      listData.messages.map((msg) =>
+        limit(async () => {
+          const msgRes = await fetch(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata`,
+            {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/json",
+              },
             },
-          },
-        );
-        if (!msgRes.ok) {
+          );
+          if (!msgRes.ok) return null;
+
+          const msgData = (await msgRes.json()) as {
+            id: string;
+            threadId: string;
+            snippet: string;
+            // Milliseconds since epoch, as a string. This is Gmail's own
+            // receipt time, so it is not spoofable by a sender's clock the way
+            // the Date header is.
+            internalDate?: string;
+            payload?: {
+              headers?: { name: string; value: string }[];
+            };
+          };
+
+          const receivedAt = Number(msgData.internalDate);
+          if (Number.isFinite(receivedAt) && !isWithinWindow(new Date(receivedAt), window)) {
+            return null;
+          }
+
+          const headers = msgData.payload?.headers ?? [];
+          const subject = decodeHtmlEntities(
+            headers.find((h) => h.name === "Subject")?.value ?? "(no subject)",
+          );
+          const sender = decodeHtmlEntities(
+            headers.find((h) => h.name === "From")?.value ?? "",
+          );
+          const date = headers.find((h) => h.name === "Date")?.value ?? "";
+          const messageId =
+            headers.find((h) => h.name === "Message-ID")?.value ?? "";
           return {
-            id: msg.id,
-            threadId: "",
-            messageId: "",
-            subject: "(error loading)",
-            sender: "",
-            snippet: "",
-            date: "",
-          };
-        }
-        const msgData = (await msgRes.json()) as {
-          id: string;
-          threadId: string;
-          snippet: string;
-          payload?: {
-            headers?: { name: string; value: string }[];
-          };
-        };
-        const headers = msgData.payload?.headers ?? [];
-        const subject = decodeHtmlEntities(
-          headers.find((h) => h.name === "Subject")?.value ?? "(no subject)",
-        );
-        const sender = decodeHtmlEntities(
-          headers.find((h) => h.name === "From")?.value ?? "",
-        );
-        const date = headers.find((h) => h.name === "Date")?.value ?? "";
-        const messageId =
-          headers.find((h) => h.name === "Message-ID")?.value ?? "";
-        return {
-          id: msgData.id,
-          threadId: msgData.threadId,
-          messageId,
-          subject,
-          sender,
-          snippet: decodeHtmlEntities(msgData.snippet ?? ""),
-          date,
-        };
-      }),
+            id: msgData.id,
+            threadId: msgData.threadId,
+            messageId,
+            subject,
+            sender,
+            snippet: decodeHtmlEntities(msgData.snippet ?? ""),
+            date,
+          } satisfies EmailMessage;
+        }),
+      ),
     );
+
+    return candidates
+      .filter((msg): msg is EmailMessage => msg !== null)
+      .slice(0, MAX_EMAILS);
   }
 }
