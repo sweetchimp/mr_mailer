@@ -3,6 +3,7 @@ import { Worker } from "bullmq";
 import { getRedisConnection } from "./lib/redis.server";
 import { prisma } from "./lib/prisma.server";
 import { runDigestPipeline } from "./services/digest.server";
+import { unsnoozeEmail } from "./services/reminder.server";
 import { getMorningDigestQueue } from "./services/queue.server";
 import { cleanupOldRecords } from "./services/cleanup.server";
 import { TokenRevokedError } from "./lib/google-auth.server";
@@ -23,10 +24,38 @@ const SERVER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const startTime = Date.now();
 let processedJobs = 0;
 let failedJobs = 0;
+let unsnoozedJobs = 0;
 
 function log(level: "info" | "error" | "warn", message: string) {
   const ts = new Date().toISOString();
   console[level === "error" ? "error" : "log"](`[${ts}] [Worker] ${message}`);
+}
+
+/**
+ * Persist a failure so it is visible in the admin view instead of only in a log
+ * line that nobody reads. Scoped to a user because `JobFailure.userId` is
+ * required, which is why the `data-cleanup` branch below cannot use this and
+ * logs instead.
+ */
+async function recordFailure(
+  userId: string,
+  jobType: string,
+  step: string,
+  errorMessage: string,
+  jobId?: string,
+): Promise<void> {
+  await prisma.jobFailure.create({
+    data: {
+      userId,
+      jobType,
+      step,
+      errorMessage,
+      context: JSON.stringify({
+        jobId,
+        timestamp: new Date().toISOString(),
+      }),
+    },
+  });
 }
 
 const worker = new Worker(
@@ -63,18 +92,7 @@ const worker = new Worker(
 
       log("error", `Failed for user ${userId} at step "${step}": ${errorMessage}`);
 
-      await prisma.jobFailure.create({
-        data: {
-          userId,
-          jobType: "morning-digest",
-          step,
-          errorMessage,
-          context: JSON.stringify({
-            jobId: job.id,
-            timestamp: new Date().toISOString(),
-          }),
-        },
-      });
+      await recordFailure(userId, "morning-digest", step, errorMessage, job.id);
 
       failedJobs++;
       throw error;
@@ -105,6 +123,72 @@ worker.on("completed", (job) => {
 
 worker.on("failed", (job, err) => {
   log("error", `Job ${job?.id} failed: ${err.message}`);
+});
+
+/**
+ * Consumer for the `email-reminder` queue.
+ *
+ * This queue was previously produced but never consumed: `snoozeAction` wrote
+ * SNOOZED + snoozedUntil and enqueued a delayed job, and nothing ever read it.
+ * An email snoozed "until tomorrow" therefore sat in the Snoozed bucket showing
+ * "Reminds <date>" indefinitely, because no code path ever moved it back. This
+ * worker is what makes snooze terminate.
+ */
+const reminderWorker = new Worker(
+  "email-reminder",
+  async (job) => {
+    const { userId, emailId } = job.data as {
+      userId: string;
+      emailId: string;
+    };
+
+    try {
+      const { unsnoozed } = await unsnoozeEmail(userId, emailId);
+
+      if (unsnoozed) {
+        unsnoozedJobs++;
+        log("info", `Un-snoozed email ${emailId} for user ${userId}`);
+      } else {
+        // The row is no longer SNOOZED: the user dismissed it or re-snoozed it
+        // while this job was queued. Leave their decision alone.
+        log(
+          "info",
+          `Skipping reminder for email ${emailId} (user ${userId}): no longer snoozed`,
+        );
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      log("error", `Un-snooze failed for email ${emailId}: ${errorMessage}`);
+      await recordFailure(
+        userId,
+        "email-reminder",
+        "unsnooze",
+        errorMessage,
+        job.id,
+      );
+      throw error;
+    }
+  },
+  {
+    connection,
+    concurrency: 1,
+    limiter: { max: 10, duration: 60_000 },
+  },
+);
+
+reminderWorker.on("completed", (job) => {
+  const userId = (job.data as { userId?: string } | undefined)?.userId;
+  log(
+    "info",
+    userId
+      ? `Reminder ${job.id} completed for user ${userId}`
+      : `Reminder ${job.id} (${job.name}) completed`,
+  );
+});
+
+reminderWorker.on("failed", (job, err) => {
+  log("error", `Reminder ${job?.id} failed: ${err.message}`);
 });
 
 async function registerRepeatableJobs() {
@@ -153,6 +237,7 @@ async function gracefulShutdown(signal: string) {
 
   try {
     await worker.close();
+    await reminderWorker.close();
     await connection.quit();
     log("info", "All connections closed");
   } catch (err) {
@@ -172,5 +257,8 @@ startWorker().catch((err) => {
 
 setInterval(() => {
   const uptime = Math.floor((Date.now() - startTime) / 1000);
-  log("info", `Health: uptime=${uptime}s, processed=${processedJobs}, failed=${failedJobs}`);
+  log(
+    "info",
+    `Health: uptime=${uptime}s, processed=${processedJobs}, failed=${failedJobs}, unsnoozed=${unsnoozedJobs}`,
+  );
 }, 300_000);
