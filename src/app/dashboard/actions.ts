@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma.server";
 import { requireUser } from "@/lib/current-session.server";
+import { hasManualDigestInFlight, manualDigestJobName } from "@/lib/manual-digest";
 import { getEmailProvider } from "@/services/email-provider.server";
 import {
   getEmailReminderQueue,
@@ -49,15 +50,23 @@ export async function refreshDigestAction(): Promise<ActionResult> {
   const user = await requireUser();
 
   try {
-    await getMorningDigestQueue().add(
-      `manual-digest-${user.id}`,
-      { userId: user.id },
-      {
-        jobId: `manual-digest-${user.id}`,
-        removeOnComplete: 20,
-        removeOnFail: 20,
-      },
-    );
+    const queue = getMorningDigestQueue();
+
+    // Do NOT pin a jobId here. A fixed `manual-digest-<userId>` occupies the id
+    // for as long as the finished job is retained (`removeOnComplete: 20`), and
+    // BullMQ silently drops an add whose jobId already exists. That made every
+    // Refresh click after the first a no-op that still answered `{ ok: true }`,
+    // so the dashboard appeared to ignore the user entirely.
+    const inFlight = await queue.getJobs(["waiting", "active"]);
+
+    if (!hasManualDigestInFlight(inFlight, user.id)) {
+      await queue.add(
+        manualDigestJobName(user.id),
+        { userId: user.id },
+        { removeOnComplete: 20, removeOnFail: 20 },
+      );
+    }
+
     return { ok: true, intent: "refresh" };
   } catch (error) {
     const errorMessage =

@@ -9,6 +9,17 @@ import { TokenRevokedError } from "./lib/google-auth.server";
 
 const connection = getRedisConnection();
 
+/**
+ * Schedules are pinned to this zone explicitly rather than inheriting whatever
+ * the host happens to be set to. `preferredMorningTime` is a wall-clock time the
+ * user chose, and "7am" silently becoming "5am" because the container moved
+ * between UTC and Europe/Bucharest is exactly the kind of change nobody notices
+ * until a digest arrives at the wrong hour. A per-user timezone is the real fix
+ * and needs a schema migration; until then, at least the behaviour is explicit
+ * and logged rather than accidental.
+ */
+const SERVER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 const startTime = Date.now();
 let processedJobs = 0;
 let failedJobs = 0;
@@ -80,7 +91,16 @@ const worker = new Worker(
 );
 
 worker.on("completed", (job) => {
-  log("info", `Job ${job.id} completed for user ${(job.data as { userId: string }).userId}`);
+  // The cleanup scheduler carries `data: {}`, so there is no user to name.
+  // Reading job.data.userId unconditionally logged "completed for user
+  // undefined" every night at the cleanup hour.
+  const userId = (job.data as { userId?: string } | undefined)?.userId;
+  log(
+    "info",
+    userId
+      ? `Job ${job.id} completed for user ${userId}`
+      : `Job ${job.id} (${job.name}) completed`,
+  );
 });
 
 worker.on("failed", (job, err) => {
@@ -100,24 +120,27 @@ async function registerRepeatableJobs() {
 
     await digestQueue.upsertJobScheduler(
       `morning-digest-${user.id}`,
-      { pattern: cron },
+      { pattern: cron, tz: SERVER_TZ },
       {
         name: `digest-${user.id}`,
         data: { userId: user.id },
       },
     );
-    log("info", `Registered daily digest for user ${user.id} at ${user.preferredMorningTime}`);
+    log(
+      "info",
+      `Registered daily digest for user ${user.id} at ${user.preferredMorningTime} (${SERVER_TZ})`,
+    );
   }
 
   await digestQueue.upsertJobScheduler(
     "data-cleanup",
-    { pattern: "0 3 * * *" },
+    { pattern: "0 3 * * *", tz: SERVER_TZ },
     {
       name: "data-cleanup",
       data: {},
     },
   );
-  log("info", "Registered daily data-cleanup job at 03:00 UTC");
+  log("info", `Registered daily data-cleanup job at 03:00 (${SERVER_TZ})`);
 }
 
 async function startWorker() {

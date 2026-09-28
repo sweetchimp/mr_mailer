@@ -9,11 +9,13 @@ const {
   mockSendReply,
   mockQueueAdd,
   mockQueueRemove,
+  mockQueueGetJobs,
   mockRevalidatePath,
 } = vi.hoisted(() => {
-  const queue = { add: vi.fn(), remove: vi.fn() };
+  const queue = { add: vi.fn(), remove: vi.fn(), getJobs: vi.fn() };
   queue.add.mockResolvedValue({ id: "job" });
   queue.remove.mockResolvedValue(undefined);
+  queue.getJobs.mockResolvedValue([]);
 
   return {
     mockEmailSummaryFindFirst: vi.fn(),
@@ -24,6 +26,7 @@ const {
     mockSendReply: vi.fn().mockResolvedValue(undefined),
     mockQueueAdd: queue.add,
     mockQueueRemove: queue.remove,
+    mockQueueGetJobs: queue.getJobs,
     mockRevalidatePath: vi.fn(),
   };
 });
@@ -59,6 +62,7 @@ vi.mock("@/services/queue.server", () => ({
   }),
   getMorningDigestQueue: () => ({
     add: mockQueueAdd,
+    getJobs: mockQueueGetJobs,
   }),
 }));
 
@@ -68,6 +72,7 @@ import {
   snoozeAction,
   refreshDigestAction,
 } from "../actions";
+import { hasManualDigestInFlight } from "@/lib/manual-digest";
 
 const OWNED = {
   id: "summary-1",
@@ -88,6 +93,7 @@ describe("dashboard server actions", () => {
     mockJobFailureCreate.mockResolvedValue({});
     mockQueueAdd.mockResolvedValue({ id: "job" });
     mockQueueRemove.mockResolvedValue(undefined);
+    mockQueueGetJobs.mockResolvedValue([]);
   });
 
   describe("ownership (IDOR regression)", () => {
@@ -287,6 +293,35 @@ describe("dashboard server actions", () => {
     });
   });
 
+  describe("hasManualDigestInFlight", () => {
+    it("is true only for a manual digest belonging to this user", () => {
+      expect(hasManualDigestInFlight([{ name: "manual-digest-user-1", data: { userId: "user-1" } }], "user-1")).toBe(true);
+    });
+
+    // Regression: the nightly scheduler parks `digest-<userId>` with the same
+    // userId until tomorrow. Treating it as in-flight made Refresh a no-op
+    // forever, which was worse than the pinned-jobId bug it replaced.
+    it("ignores the nightly scheduled digest for the same user", () => {
+      expect(hasManualDigestInFlight([{ name: "digest-user-1", data: { userId: "user-1" } }], "user-1")).toBe(false);
+    });
+
+    it("ignores another user's manual digest", () => {
+      expect(hasManualDigestInFlight([{ name: "manual-digest-user-2", data: { userId: "user-2" } }], "user-1")).toBe(false);
+    });
+
+    it("ignores jobs with no userId, so an unattributable job never blocks a click", () => {
+      expect(hasManualDigestInFlight([{ name: "manual-digest-user-1", data: undefined }], "user-1")).toBe(false);
+    });
+
+    it("ignores unrelated job types", () => {
+      expect(hasManualDigestInFlight([{ name: "snooze-msg-1", data: { userId: "user-1" } }], "user-1")).toBe(false);
+    });
+
+    it("is false for an empty queue", () => {
+      expect(hasManualDigestInFlight([], "user-1")).toBe(false);
+    });
+  });
+
   describe("refreshDigestAction", () => {
     it("enqueues a digest job for the caller", async () => {
       const result = await refreshDigestAction();
@@ -295,8 +330,70 @@ describe("dashboard server actions", () => {
       expect(mockQueueAdd).toHaveBeenCalledWith(
         "manual-digest-user-1",
         { userId: "user-1" },
-        expect.objectContaining({ jobId: "manual-digest-user-1" }),
+        expect.objectContaining({ removeOnComplete: 20 }),
       );
+    });
+
+    // The regression: a pinned jobId occupies the id while the finished job is
+    // retained, and BullMQ drops an add whose jobId already exists. Every click
+    // after the first was silently swallowed while still answering ok: true.
+    it("does not pin a jobId, so repeated clicks are not deduplicated away", async () => {
+      await refreshDigestAction();
+
+      const opts = mockQueueAdd.mock.calls[0][2] as Record<string, unknown>;
+      expect(opts).not.toHaveProperty("jobId");
+    });
+
+    it("skips enqueueing when the caller already has a manual digest in flight", async () => {
+      mockQueueGetJobs.mockResolvedValue([
+        { name: "manual-digest-user-1", data: { userId: "user-1" } },
+      ]);
+
+      const result = await refreshDigestAction();
+
+      expect(result.ok).toBe(true);
+      expect(mockQueueAdd).not.toHaveBeenCalled();
+    });
+
+    // The nightly scheduler parks a job named `digest-<userId>` carrying the same
+    // userId until tomorrow morning. Treating it as "in flight" made Refresh a
+    // permanent no-op, which is worse than the dedupe bug it replaced.
+    it("still enqueues when only the scheduled daily digest is pending", async () => {
+      mockQueueGetJobs.mockResolvedValue([
+        { name: "digest-user-1", data: { userId: "user-1" } },
+      ]);
+
+      await refreshDigestAction();
+
+      expect(mockQueueAdd).toHaveBeenCalledOnce();
+    });
+
+    it("only inspects waiting and active jobs", async () => {
+      await refreshDigestAction();
+
+      expect(mockQueueGetJobs).toHaveBeenCalledWith(["waiting", "active"]);
+    });
+
+    it("still enqueues when only another user has a digest in flight", async () => {
+      mockQueueGetJobs.mockResolvedValue([
+        { name: "manual-digest-user-2", data: { userId: "user-2" } },
+      ]);
+
+      await refreshDigestAction();
+
+      expect(mockQueueAdd).toHaveBeenCalledOnce();
+    });
+
+    // A job we cannot attribute to anyone must not block a refresh: running a
+    // redundant digest is cheap, silently skipping the user's click is not.
+    it("still enqueues when an in-flight job carries no data", async () => {
+      mockQueueGetJobs.mockResolvedValue([
+        { name: "manual-digest-user-1", data: undefined },
+      ]);
+
+      await refreshDigestAction();
+
+      expect(mockQueueAdd).toHaveBeenCalledOnce();
     });
 
     it("records a JobFailure when the queue rejects", async () => {
