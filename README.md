@@ -13,7 +13,7 @@ triage each message, and gives you a six-bucket dashboard to work through.
 | Framework | Next.js 15 (App Router, standalone output), React 19, Tailwind 4 |
 | Database | MySQL 8 via Prisma 6 |
 | Queue | BullMQ on Redis 7 |
-| AI | Groq (`llama-3.3-70b-versatile`) |
+| AI | Groq (`openai/gpt-oss-120b` by default, overridable via `GROQ_MODEL`) |
 | Auth | OAuth 2.0 + PKCE, sessions signed as JWTs with `jose` |
 | Tests | Vitest |
 
@@ -80,16 +80,17 @@ Open <http://localhost:3000>, sign in, and the post-login digest runs inline —
 it fetches your recent mail, calls Groq, and writes the summaries the dashboard
 reads. Give it a few seconds to populate.
 
-To also run the scheduled jobs (daily digest cron, and eventually snooze
-reminders) in a second terminal:
+To also run the scheduled jobs (daily digest cron, data cleanup, and snooze
+unsnoozing) in a second terminal:
 
 ```bash
 npm run worker
 ```
 
-The worker is optional for browsing. Without it, "Refresh now" and snoozing
-still work as long as Redis is up — those enqueue jobs, but nothing consumes
-the reminder queue yet.
+The worker is optional for browsing. Without it, "Refresh now" enqueues digest
+jobs but nothing processes them until the worker is up, and emails snoozed with
+an earlier `snoozedUntil` stay SNOOZED past their time (the unsnooze consumer
+lives in the worker).
 
 ## Scripts
 
@@ -97,7 +98,7 @@ the reminder queue yet.
 |---|---|
 | `npm run dev` | Development server on port 3000 |
 | `npm run build` | Production build (`output: "standalone"`) |
-| `npm start` | `next start`. Note this app is configured for `output: "standalone"`, which is what the Dockerfile and Railway use — see below |
+| `npm start` | `node .next/standalone/server.js` — the standalone production server. There is no `next start` here; see the smoke-test note below |
 | `npm run worker` | BullMQ worker — repeatable job scheduler and job processors |
 | `npm test` | Vitest, single run |
 | `npm run lint` | ESLint |
@@ -124,6 +125,7 @@ node .next/standalone/server.js
 | `MICROSOFT_TENANT_ID` | `consumers`, `common`, `organizations`, or a tenant GUID |
 | `MICROSOFT_REDIRECT_URI` | Must match the URI registered in Entra |
 | `GROQ_API_KEY` | Groq API key used for summarization |
+| `GROQ_MODEL` | Groq model to use (default `openai/gpt-oss-120b`; models retire without notice, so prefer the env override over hardcoding) |
 | `SESSION_SECRET` | Signs session JWTs **and** encrypts stored OAuth tokens. Generate a random 32+ character value. The app refuses to start in production if it is missing or too short. |
 | `RETENTION_DAYS` | How long to keep email history (default 90) |
 
@@ -179,24 +181,39 @@ in sync with `src/components/theme-switcher.tsx`.
 
 These are known gaps, not bugs:
 
-- `/schedule`, `/minutes`, and `/admin/job-failures` routes do not exist. The
-  matching services (`schedule.server.ts`, `minutes.server.ts`,
-  `meeting-reminder.server.ts`) are present but unwired.
-- Three BullMQ queues are declared with **no consumer**: `email-reminder`,
-  `meeting-reminder`, and `schedule-block`. Snoozing an email enqueues an
-  `email-reminder` job, but nothing currently sends the notification. Only
-  `morning-digest` is processed, by `src/worker.ts`.
+- `/schedule` and `/minutes` do not exist. Early notes in this README claimed
+  `schedule.server.ts`, `minutes.server.ts`, and `meeting-reminder.server.ts`
+  were "present but unwired" — those files were never written.
+- Two BullMQ queues are declared with **no consumer**: `meeting-reminder` and
+  `schedule-block`. Snoozing does work end to end today: `snoozeAction` enqueues
+  an `email-reminder` job and `src/worker.ts` consumes it, unsnoozing the email
+  when `snoozedUntil` passes. That is the only in-app behavior; no outbound mail
+  is sent on unsnooze.
 - `src/lib/diff.server.ts` is ported and tested but currently unused.
 
 ## Deployment
 
-Railway builds the `Dockerfile` and runs `node server.js` from the Next
-standalone output. The image also carries `src/` and `tsconfig.json` so the
-same container can run the worker via `docker run mr-mailer npm run worker`.
-
 ```bash
 docker compose up -d        # mysql, redis, web, worker
 ```
+
+The `web` and `worker` compose services build the same image and read `env_file:
+.env` at run time (secrets are never baked into the image). `npm start` runs the
+Next standalone server at `.next/standalone/server.js`, and the worker entrypoint
+runs `npm run worker` (`tsx src/worker.ts`). Two settings are required for the
+containers, not for local dev:
+
+- `HOSTNAME=0.0.0.0` — without it the standalone server binds loopback *inside*
+  the container and the published port maps to nothing, so the app appears to
+  hang with no error in the logs.
+- `TZ=Europe/Budapest` — Node defaults to UTC in the image, which silently shifts
+  the digest cron (07:00) and the dashboard's meeting times by hours. The digest
+  scheduler, data-cleanup cron, and meeting-time rendering all derive from the
+  runtime zone, so the container must match the app's home timezone.
+
+The build itself is hermetic: fonts are vendored in `src/app/fonts`, and the
+session-secret and Groq clients are constructed lazily, so `next build` in a
+fresh image never needs `.env` or network egress to build.
 
 > **Existing databases:** the squashed `20260924000000_init` migration will fail
 > against a database created by the pre-migration migrations. See step 4.
