@@ -43,6 +43,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${inter.variable} ${plexMono.variable} h-full antialiased`}
+      // The theme script below sets data-theme before React hydrates, so this
+      // element always carries an attribute the server HTML did not have.
+      // Suppress the check rather than patch — patching would fight the script.
+      suppressHydrationWarning
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
