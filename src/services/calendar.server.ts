@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma.server";
-import { getValidAccessToken, TokenRevokedError } from "../lib/google-auth.server";
+import { getValidAccessToken } from "../lib/google-auth.server";
 
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 const CALENDAR_API =
@@ -44,10 +44,15 @@ function parseTime(time: GoogleEventTime | undefined): Date | null {
 /**
  * Google Calendar events for today, in the server's local timezone.
  *
- * Returns an empty array (rather than throwing) when the user has no Google
- * token or connected Microsoft instead — meeting reminders and the dashboard's
- * "Today's Meetings" simply have nothing to show. Throws TokenRevokedError only
- * when a Google token exists but was never granted the calendar scope.
+ * Returns an empty array rather than throwing whenever the calendar simply is
+ * not available: no Google token, a Microsoft-only account, a token without the
+ * calendar scope, or a 403 from the API (the Calendar API not being enabled in
+ * the project, a per-calendar ACL, or quota). Calendar is a nice-to-have panel
+ * and must never be able to take the dashboard down or misrepresent a healthy
+ * Gmail grant as a revoked one.
+ *
+ * This function never mutates `user.tokenRevokedAt`; the only revocation signal
+ * is the refresh-time `invalid_grant` in google-auth.server.ts.
  */
 export async function getTodaysEvents(userId: string): Promise<CalendarEvent[]> {
   const tokenRecord = await prisma.oAuthToken.findFirst({
@@ -59,10 +64,13 @@ export async function getTodaysEvents(userId: string): Promise<CalendarEvent[]> 
   if (!tokenRecord || tokenRecord.provider !== "GOOGLE") return [];
 
   if (!tokenRecord.scope?.includes(CALENDAR_SCOPE)) {
-    throw new TokenRevokedError(
-      "Calendar access not granted. Re-authenticate to grant calendar access.",
-      userId,
+    // Not a revocation. The grant is still healthy; it just never included
+    // calendar, so there is nothing to show. Throwing TokenRevokedError here
+    // told every caller the connection was dead when it was not.
+    console.warn(
+      `[calendar] user ${userId} has no ${CALENDAR_SCOPE} grant; skipping calendar`,
     );
+    return [];
   }
 
   const accessToken = await getValidAccessToken(userId);
@@ -86,13 +94,19 @@ export async function getTodaysEvents(userId: string): Promise<CalendarEvent[]> 
   });
 
   if (res.status === 403) {
-    await prisma.user
-      .update({ where: { id: userId }, data: { tokenRevokedAt: new Date() } })
-      .catch(() => {});
-    throw new TokenRevokedError(
-      "Calendar access revoked. Re-authentication required.",
-      userId,
+    // A 403 from Calendar means many different things — the Calendar API not
+    // enabled in the project, the scope missing on this token, a per-calendar
+    // ACL, or quota. None of them mean the Gmail grant was revoked, so this
+    // must NOT write user.tokenRevokedAt. Doing so flipped the dashboard into
+    // "reconnect Google" mode and suppressed the empty state, sending the user
+    // to re-authorise a credential that still worked. The only legitimate
+    // revocation signal is the refresh-time `invalid_grant` handled in
+    // google-auth.server.ts.
+    const errorText = await res.text();
+    console.warn(
+      `[calendar] 403 for user ${userId}; treating calendar as unavailable: ${errorText.slice(0, 300)}`,
     );
+    return [];
   }
 
   if (!res.ok) {
