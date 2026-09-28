@@ -10,6 +10,15 @@ import type { EmailMessage } from "./email-provider.server";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
+/**
+ * Groq retires models without much notice: `llama-3.3-70b-versatile` was
+ * hardcoded here and quietly disappeared from the catalogue, which turned a
+ * valid key into a wall of 404s. Keep the model in the environment so the next
+ * deprecation is a `.env` edit rather than a code change. Confirm what your key
+ * can reach with `GET https://api.groq.com/openai/v1/models`.
+ */
+const GROQ_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
+
 interface EmailSummaryResult {
   priority: "HIGH" | "MEDIUM" | "LOW";
   summaryText: string;
@@ -31,7 +40,7 @@ async function summarizeEmail(
     : stripped;
 
   const response = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
+    model: GROQ_MODEL,
     response_format: { type: "json_object" },
     temperature: 0.3,
     max_tokens: 512,
@@ -78,6 +87,16 @@ export async function summarizeEmails(
   });
   const existingIds = new Set(existingSummaries.map((s) => s.gmailMessageId));
 
+  // Every outcome is counted. Previously a provider outage looked identical to
+  // an empty inbox: each email was swallowed into `summary: null`, nothing was
+  // written, and `summarizeEmails` resolved successfully, so the pipeline
+  // reported success and no JobFailure was ever recorded. `cached` is tracked
+  // separately so that an all-cached run is never mistaken for total failure.
+  let succeeded = 0;
+  let cached = 0;
+  let failed = 0;
+  let lastError: unknown = null;
+
   const tasks = emails.map((email) =>
     limit(async (): Promise<SummarizedEmail> => {
       if (existingIds.has(email.id)) {
@@ -85,6 +104,7 @@ export async function summarizeEmails(
           where: { gmailMessageId: email.id },
         });
         if (saved) {
+          cached++;
           return {
             ...email,
             summary: {
@@ -99,7 +119,13 @@ export async function summarizeEmails(
 
       try {
         const result = await summarizeEmail(email);
-        if (!result) return { ...email, summary: null };
+        if (!result) {
+          failed++;
+          console.error(
+            `[ai] ${GROQ_MODEL} returned no usable summary for ${email.id} (${email.subject})`,
+          );
+          return { ...email, summary: null };
+        }
 
         await prisma.emailSummary.upsert({
           where: { gmailMessageId: email.id },
@@ -119,12 +145,40 @@ export async function summarizeEmails(
           },
         });
 
+        succeeded++;
         return { ...email, summary: result };
-      } catch {
+      } catch (error) {
+        failed++;
+        lastError = error;
+        console.error(
+          `[ai] summarization failed for ${email.id} (${email.subject}):`,
+          error instanceof Error ? error.message : error,
+        );
         return { ...email, summary: null };
       }
     }),
   );
 
-  return Promise.all(tasks);
+  const summarized = await Promise.all(tasks);
+
+  if (failed > 0 && succeeded === 0 && cached === 0) {
+    // Throw so `runDigestPipeline` records a JobFailure and the dashboard can
+    // explain itself. A partial batch is fine and stays silent beyond a warning.
+    throw Object.assign(
+      new Error(
+        `All ${failed} email summarization attempts failed${
+          lastError instanceof Error ? `: ${lastError.message}` : ""
+        }`,
+      ),
+      { step: "ai-summarization", cause: lastError },
+    );
+  }
+
+  if (failed > 0) {
+    console.warn(
+      `[ai] ${failed} of ${emails.length} summaries failed; ${succeeded} saved, ${cached} cached`,
+    );
+  }
+
+  return summarized;
 }
