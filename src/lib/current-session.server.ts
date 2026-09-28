@@ -4,22 +4,10 @@ import { prisma } from "./prisma.server";
 import { SESSION_MAX_AGE_SECONDS } from "./session-cookie";
 import {
   getSessionCookieName,
-  sessionCookieOptions,
-  signSession,
   verifySession,
 } from "./session.server";
 import type { SessionData } from "./session.server";
 import type { User } from "@prisma/client";
-
-/**
- * How stale `lastActivity` must get before we re-sign. Re-signing on *every*
- * request would keep the JWT's expiry permanently rolled forward (the old
- * cookie-session behaviour) but also emit a Set-Cookie on every render, so we
- * batch the refresh instead. Any value well under the 30-minute session lifetime
- * preserves the "30 minutes of inactivity logs you out" guarantee: activity
- * within this window keeps the cookie ahead of the idle deadline.
- */
-const TOUCH_INTERVAL_MS = 10 * 60 * 1000;
 
 async function readSession(): Promise<SessionData | null> {
   const token = (await cookies()).get(getSessionCookieName())?.value;
@@ -37,14 +25,10 @@ export async function requireUser(): Promise<User> {
   const session = await readSession();
   if (!session?.userId) redirect("/login");
 
-  if (Date.now() - session.lastActivity > TOUCH_INTERVAL_MS) {
-    const token = await signSession({
-      userId: session.userId,
-      lastActivity: Date.now(),
-    });
-    (await cookies()).set(getSessionCookieName(), token, sessionCookieOptions());
-  }
-
+  // No sliding refresh here on purpose: writing the cookie from a Server
+  // Component render throws and 500s the page. `refreshSessionToken` runs in
+  // middleware instead, which is allowed to set cookies and sees every matched
+  // request. This function stays a pure read so it is safe to call from pages.
   const user = await prisma.user.findUnique({ where: { id: session.userId } });
   if (!user) redirect("/login");
   return user;

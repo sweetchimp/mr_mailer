@@ -46,6 +46,19 @@ export async function getProviderForUser(userId: string): Promise<Provider> {
 }
 
 /**
+ * How recent an AI-summarization failure must be to be worth reporting.
+ *
+ * Without a bound this is the most recent failure *ever*, so a single outage
+ * recorded days ago kept presenting itself as a current problem: the banner
+ * claims "press Refresh to retry" long after the key was fixed, and keeps
+ * claiming it every time the buckets happen to be empty. Empty buckets are the
+ * normal state for a caught-up inbox, so a stale failure is indistinguishable
+ * from a broken provider — the same "looks broken, is fine" trap as the
+ * swallowed Refresh click and the blank calendar panel.
+ */
+const SUMMARIZATION_FAILURE_WINDOW_HOURS = 24;
+
+/**
  * The most recent AI-summarization failure for this user, if any. The dashboard
  * renders this so a provider outage (bad key, decommissioned model, outage)
  * appears as a named problem instead of six silently zeroed buckets.
@@ -53,11 +66,52 @@ export async function getProviderForUser(userId: string): Promise<Provider> {
 export async function getLatestSummarizationFailure(
   userId: string,
 ): Promise<{ errorMessage: string; createdAt: Date } | null> {
+  const since = new Date();
+  since.setHours(since.getHours() - SUMMARIZATION_FAILURE_WINDOW_HOURS);
+
   return prisma.jobFailure.findFirst({
-    where: { userId, step: "ai-summarization" },
+    where: {
+      userId,
+      step: "ai-summarization",
+      createdAt: { gte: since },
+    },
     orderBy: { createdAt: "desc" },
     select: { errorMessage: true, createdAt: true },
   });
+}
+
+export interface JobFailureRow {
+  id: string;
+  jobType: string;
+  step: string;
+  errorMessage: string;
+  context: string | null;
+  createdAt: string;
+}
+
+const MAX_FAILURE_ROWS = 100;
+
+/**
+ * Recorded job failures, newest first. `JobFailure` rows are written by the
+ * worker and the dashboard's queue action, but until now nothing could read
+ * them back: a failing job was only visible by tailing container logs, which
+ * is why several real faults went unnoticed here.
+ */
+export async function getJobFailures(userId: string): Promise<JobFailureRow[]> {
+  const rows = await prisma.jobFailure.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    take: MAX_FAILURE_ROWS,
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    jobType: row.jobType,
+    step: row.step,
+    errorMessage: row.errorMessage,
+    context: row.context,
+    createdAt: row.createdAt.toISOString(),
+  }));
 }
 
 /** Only called for users with no summaries yet, to avoid an unbounded list. */
