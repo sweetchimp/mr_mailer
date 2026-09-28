@@ -115,6 +115,14 @@ export async function getTodaysEvents(userId: string): Promise<CalendarEvent[]> 
 
   if (!res.ok) {
     const errorText = await res.text();
+    // Still a throw — a 500 or a malformed response is a real fault, not an
+    // absent calendar. But log before throwing: the dashboard wraps this call in
+    // a bare `catch {}`, so without this line a 500 would surface as the same
+    // silent empty meetings panel that a disabled API produces. That ambiguity is
+    // exactly what made the disabled-API case hard to diagnose.
+    console.warn(
+      `[calendar] unexpected ${res.status} for user ${userId}: ${errorText.slice(0, 300)}`,
+    );
     throw new Error(`Calendar API error: ${res.status} ${errorText}`);
   }
 

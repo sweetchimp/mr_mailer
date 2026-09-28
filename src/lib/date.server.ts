@@ -45,3 +45,24 @@ export function toGmailDate(value: Date): string {
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}/${month}/${day}`;
 }
+
+/** The zone every user-facing timestamp in this app is rendered in. */
+export const DISPLAY_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+/**
+ * Wall-clock time of an instant, in the same local zone the rest of the app
+ * treats as "the user's" time.
+ *
+ * Google returns event starts as absolute instants carrying the event's own UTC
+ * offset (a meeting at 12:30+03:00 comes back as `12:30:00+03:00`). Rendering
+ * that with `timeZone: "UTC"` showed 09:30 for a 12:30 meeting — a three-hour
+ * error on every row. Passing no `timeZone` uses the runtime default, which is
+ * the server's zone and matches every other timestamp on the dashboard.
+ */
+export function formatLocalTime(value: Date | string): string {
+  return new Date(value).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: DISPLAY_TIMEZONE,
+  });
+}

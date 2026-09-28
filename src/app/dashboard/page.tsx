@@ -5,6 +5,7 @@ import {
   getProviderForUser,
 } from "@/services/dashboard.server";
 import { getTodaysEvents } from "@/services/calendar.server";
+import { formatLocalTime } from "@/lib/date.server";
 import { StatTile } from "@/components/stat-tile";
 
 export default async function DashboardIndex() {
@@ -27,9 +28,16 @@ export default async function DashboardIndex() {
         title: event.title,
         startTime: event.startTime.toISOString(),
       }));
-    } catch {
+    } catch (error) {
       // Calendar is a nice-to-have: a revoked or unscoped token should not
-      // take the whole dashboard down.
+      // take the whole dashboard down. But swallowing the reason silently
+      // makes an empty meetings panel indistinguishable from "no meetings",
+      // so keep the cause in the log.
+      console.warn(
+        `[dashboard] meetings panel unavailable for user ${user.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       meetings = [];
     }
   }
@@ -37,12 +45,7 @@ export default async function DashboardIndex() {
   const total =
     counts.high + counts.medium + counts.low + counts.replied + counts.snoozed;
 
-  const formatTime = (iso: string) =>
-    new Date(iso).toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone: "UTC",
-    });
+  const formatTime = (iso: string) => formatLocalTime(iso);
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">

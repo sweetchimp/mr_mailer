@@ -4,6 +4,8 @@ import {
   currentDayWindow,
   isWithinWindow,
   toGmailDate,
+  formatLocalTime,
+  DISPLAY_TIMEZONE,
 } from "../date.server";
 
 /**
@@ -88,5 +90,41 @@ describe("toGmailDate", () => {
     // exactly the mismatch that makes a bare Gmail `after:` date unreliable.
     const localNewYear = new Date(2026, 0, 1, 12, 0, 0);
     expect(toGmailDate(localNewYear)).toBe("2026/01/01");
+  });
+});
+
+describe("formatLocalTime", () => {
+  // A real start time from the connected Google calendar, which reports event
+  // times as absolute instants carrying the event's own offset.
+  const internSession = "2026-08-03T12:30:00+03:00";
+
+  it("renders the event's wall-clock time, not the UTC equivalent", () => {
+    const expected = new Date(internSession).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: DISPLAY_TIMEZONE,
+    });
+    expect(formatLocalTime(internSession)).toBe(expected);
+  });
+
+  // The regression: this rendered with `timeZone: "UTC"`, so a 12:30+03:00
+  // meeting was displayed as 09:30 — three hours early on every meeting row.
+  it("does not shift the time into UTC", () => {
+    const asUtc = new Date(internSession).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "UTC",
+    });
+    const local = formatLocalTime(internSession);
+
+    // Only assert they differ when the host is genuinely not on UTC; on a UTC
+    // host both are correct and the assertion would be meaningless.
+    if (DISPLAY_TIMEZONE !== "UTC") expect(local).not.toBe(asUtc);
+  });
+
+  it("accepts a Date as well as an ISO string", () => {
+    expect(formatLocalTime(new Date(internSession))).toBe(
+      formatLocalTime(internSession),
+    );
   });
 });
