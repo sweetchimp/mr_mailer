@@ -1,10 +1,13 @@
 import { prisma } from "../lib/prisma.server";
-import type { EmailSummary, Provider } from "@prisma/client";
+import type { EmailSummary, Prisma, Priority, Provider } from "@prisma/client";
 import type {
   EmailBucket,
   HistoryEmail,
   SummarizedEmail,
 } from "../lib/email-view";
+import { startOfLocalDay, formatLocalTime } from "../lib/date.server";
+import { buildTickerItems, type TickerItem } from "../lib/ticker";
+import { averageResponseTime, formatDuration } from "../lib/weekly-digest";
 
 export interface DashboardCounts {
   high: number;
@@ -122,6 +125,7 @@ function toSummarizedEmail(row: EmailSummary): SummarizedEmail {
     id: row.gmailMessageId,
     subject: row.subject,
     sender: row.sender,
+    senderAddress: row.senderAddress,
     snippet: row.summaryText,
     date: row.createdAt.toISOString(),
     summary: {
@@ -163,13 +167,37 @@ export async function getBucketEmails(
 export async function getHistoryEmails(
   userId: string,
   bucket: "replied" | "history",
+  search?: string | null,
 ): Promise<HistoryEmail[]> {
+  const query = search?.trim() ?? "";
+
+  const base: Prisma.EmailSummaryWhereInput =
+    bucket === "replied"
+      ? { userId, status: "SENT" }
+      : { userId, status: { in: ["SENT", "DISMISSED"] } };
+
+  const where: Prisma.EmailSummaryWhereInput = {
+    ...base,
+    // `contains` is MySQL LIKE underneath, so this is a case-insensitive
+    // substring match on the connection's collation and cannot use an index.
+    // Fine at this row count; the alternative that could use one would be a
+    // full-text index nobody here needs yet.
+    ...(query
+      ? {
+          OR: [
+            { subject: { contains: query } },
+            { sender: { contains: query } },
+            { summaryText: { contains: query } },
+          ],
+        }
+      : {}),
+  };
+
   const rows = await prisma.emailSummary.findMany({
-    where:
-      bucket === "replied"
-        ? { userId, status: "SENT" }
-        : { userId, status: { in: ["SENT", "DISMISSED"] } },
+    where,
     orderBy: { createdAt: "desc" },
+    // Applied after the filter, so a search reaches the whole archive rather
+    // than only the newest 200 rows.
     take: MAX_LIST_SIZE,
   });
 
@@ -179,5 +207,141 @@ export async function getHistoryEmails(
     sender: row.sender,
     status: row.status,
     date: row.createdAt.toISOString(),
+    summary: row.summaryText,
   }));
+}
+
+export interface HandledToday {
+  /** Of today's arrivals, the ones now replied to or dismissed. */
+  handled: number;
+  /** Everything the digest summarized today, i.e. today's arrivals. */
+  total: number;
+}
+
+/**
+ * The "X / Y handled today" ring.
+ *
+ * Windowed by `createdAt` (arrival) rather than by `sentAt`/`dismissedAt`, so
+ * X and Y describe the same set of emails: you cannot have handled more of
+ * today's mail than arrived today. Snoozed counts as not-yet-handled.
+ */
+export async function getTodaysHandledCounts(
+  userId: string,
+): Promise<HandledToday> {
+  const since = startOfLocalDay();
+
+  const [total, handled] = await Promise.all([
+    prisma.emailSummary.count({
+      where: { userId, createdAt: { gte: since } },
+    }),
+    prisma.emailSummary.count({
+      where: {
+        userId,
+        createdAt: { gte: since },
+        status: { in: ["SENT", "DISMISSED"] },
+      },
+    }),
+  ]);
+
+  return { handled, total };
+}
+
+export interface AverageReplyTime {
+  /** `4h 12m`, or null when there are not enough replies to say. */
+  label: string | null;
+  samples: number;
+}
+
+const AVERAGE_REPLY_SAMPLES = 200;
+
+export async function getAverageReplyTime(
+  userId: string,
+): Promise<AverageReplyTime> {
+  const rows = await prisma.emailSummary.findMany({
+    where: { userId, sentAt: { not: null } },
+    select: { createdAt: true, sentAt: true },
+    orderBy: { sentAt: "desc" },
+    take: AVERAGE_REPLY_SAMPLES,
+  });
+
+  const { avgTimeToReplyMs, replySamples } = averageResponseTime(rows);
+  return {
+    label: avgTimeToReplyMs === null ? null : formatDuration(avgTimeToReplyMs),
+    samples: replySamples,
+  };
+}
+
+const TICKER_EMAILS = 4;
+const TICKER_REPLIES = 3;
+const TICKER_SNOOZES = 3;
+
+// The Priority enum sorts alphabetically (HIGH, LOW, MEDIUM), which is not the
+// urgency order, so the ranked sort happens here.
+const PRIORITY_RANK: Record<Priority, number> = {
+  HIGH: 0,
+  MEDIUM: 1,
+  LOW: 2,
+};
+
+export async function getTickerItems(
+  userId: string,
+  meetings: { eventId: string; title: string; startTime: Date }[],
+): Promise<TickerItem[]> {
+  const now = new Date();
+
+  const [emailRows, replies, snoozes] = await Promise.all([
+    prisma.emailSummary.findMany({
+      where: { userId, status: "PENDING" },
+      orderBy: { createdAt: "desc" },
+      take: TICKER_EMAILS * 3,
+      select: {
+        gmailMessageId: true,
+        subject: true,
+        priority: true,
+        createdAt: true,
+      },
+    }),
+    prisma.emailSummary.findMany({
+      where: { userId, status: "SENT", sentAt: { not: null } },
+      orderBy: { sentAt: "desc" },
+      take: TICKER_REPLIES,
+      select: { gmailMessageId: true, subject: true, sentAt: true },
+    }),
+    prisma.emailSummary.findMany({
+      where: { userId, status: "SNOOZED", snoozedUntil: { lte: now } },
+      orderBy: { snoozedUntil: "asc" },
+      take: TICKER_SNOOZES,
+      select: { gmailMessageId: true, subject: true, snoozedUntil: true },
+    }),
+  ]);
+
+  const emails = [...emailRows]
+    .sort(
+      (a, b) =>
+        PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+        b.createdAt.getTime() - a.createdAt.getTime(),
+    )
+    .slice(0, TICKER_EMAILS);
+
+  return buildTickerItems(
+    {
+      meetings,
+      snoozes: snoozes.map((row) => ({
+        id: row.gmailMessageId,
+        subject: row.subject,
+        snoozedUntil: row.snoozedUntil as Date,
+      })),
+      replies: replies.map((row) => ({
+        id: row.gmailMessageId,
+        subject: row.subject,
+        sentAt: row.sentAt as Date,
+      })),
+      emails: emails.map((row) => ({
+        id: row.gmailMessageId,
+        subject: row.subject,
+        priority: row.priority,
+      })),
+    },
+    formatLocalTime,
+  );
 }

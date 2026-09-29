@@ -16,7 +16,12 @@ model User {
   createdAt            DateTime         @default(now()) @map("created_at")
   preferredMorningTime String           @default("07:00") @map("preferred_morning_time")
   tokenRevokedAt       DateTime?        @map("token_revoked_at")
+  /// Opt-in for the Sunday evening summary email. Off by default because it is
+  /// the one thing this app sends that the user did not ask to be sent, using a
+  /// mail scope they consented to for replies.
+  weeklyDigestEmail    Boolean          @default(false) @map("weekly_digest_email")
   emailSummaries       EmailSummary[]
+  senderPreferences    SenderPreference[]
   jobFailures          JobFailure[]
   oauthTokens          OAuthToken[]
   replyFeedback        ReplyFeedback[]
@@ -50,18 +55,60 @@ model EmailSummary {
   userId         String   @map("user_id")
   gmailMessageId String   @unique @map("gmail_message_id")
   sender         String   @map("sender")
+  /// The address parsed out of `sender`, stored separately because `sender` is
+  /// a display string the sender chooses ("Ada <ada@example.com>") and grouping
+  /// by it would split one person across every display name they have used.
+  /// Null on rows written before this column existed; those rows simply never
+  /// contribute to a sender's count.
+  senderAddress  String?  @map("sender_address")
   subject        String   @map("subject")
   priority       Priority @map("priority")
   summaryText    String   @map("summary_text") @db.Text
   suggestedReply String?  @map("suggested_reply") @db.Text
   status         Status   @default(PENDING) @map("status")
   snoozedUntil   DateTime? @map("snoozed_until")
+  /// When the user actually replied. `createdAt` is when the AI summarized the
+  /// mail, which is not the same thing — a snoozed or re-digested email makes
+  /// the gap arbitrary — so time-to-reply needs its own column.
+  sentAt         DateTime? @map("sent_at")
+  /// DismissedAt's counterpart to sentAt. Status is mutable and unlogged, so
+  /// without this a weekly "how much did you handle" count can only be
+  /// approximated by arrival date and misreports anything handled later than it
+  /// arrived. Null on every row that has not been dismissed.
+  dismissedAt    DateTime? @map("dismissed_at")
   createdAt      DateTime @default(now()) @map("created_at")
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([createdAt])
+  @@index([userId, sentAt])
+  @@index([userId, dismissedAt])
+  @@index([userId, senderAddress])
   @@map("email_summaries")
+}
+
+model SenderPreference {
+  id                    String    @id @default(uuid()) @map("id")
+  userId                String    @map("user_id")
+  senderAddress         String    @map("sender_address")
+  senderName            String?   @map("sender_name")
+  /// How many of this sender's emails the user dismissed while they were
+  /// classified LOW priority. That conjunction is deliberate — a LOW email the
+  /// user actually read is not evidence they want less of this sender, and a
+  /// MEDIUM one they dismissed might well be mail they wanted.
+  lowDismissals         Int       @default(0) @map("low_dismissals")
+  /// Set when the user dismisses the "consider unsubscribing" banner. Kept as a
+  /// row rather than derived from a count because a derived query has nowhere to
+  /// put it, and re-showing a banner the user already said no to is the failure
+  /// mode that makes this kind of feature get uninstalled.
+  suggestionDismissedAt DateTime? @map("suggestion_dismissed_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, senderAddress])
+  @@index([userId])
+  @@map("sender_preferences")
 }
 
 model JobFailure {

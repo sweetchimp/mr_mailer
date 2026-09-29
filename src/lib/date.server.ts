@@ -32,6 +32,24 @@ export function isWithinWindow(value: Date, window: DateWindow): boolean {
 }
 
 /**
+ * The last `days` days, ending now.
+ *
+ * Distinct from `currentDayWindow` because a weekly rollup has to straddle
+ * calendar days: a Sunday-evening summary is "since last Sunday", not "since
+ * midnight". Both bounds stay in the server's zone, the same limitation the rest
+ * of this module carries.
+ */
+export function trailingWindow(
+  days: number,
+  reference: Date = new Date(),
+): DateWindow {
+  const end = new Date(reference);
+  const start = new Date(reference);
+  start.setDate(start.getDate() - days);
+  return { start, end };
+}
+
+/**
  * `YYYY/MM/DD` in local time, for Gmail's `after:` search operator.
  *
  * Gmail evaluates bare date operators in Pacific Time, not the server's zone,

@@ -1,22 +1,108 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState, useTransition } from "react";
+import Link from "next/link";
 import { EmailCard } from "./email-card";
-import { snoozeAction } from "@/app/dashboard/actions";
-import { useTransition } from "react";
+import { dismissAction, snoozeAction } from "@/app/dashboard/actions";
 import type { HistoryEmail, SummarizedEmail } from "@/lib/email-view";
 
-export function EmailList({ emails }: { emails: SummarizedEmail[] }) {
+export function EmailList({
+  emails,
+  selectable = false,
+  unsubscribeNotices = {},
+}: {
+  emails: SummarizedEmail[];
+  /** Enables checkboxes and the bulk-dismiss bar. */
+  selectable?: boolean;
+  /** Keyed by normalized sender address; see `getUnsubscribeNotices`. */
+  unsubscribeNotices?: Record<string, { senderName: string | null; count: number }>;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [isPending, startTransition] = useTransition();
+
+  // Hooks must run before this return; the early exit used to sit above them.
   if (emails.length === 0) return null;
 
+  const toggle = (id: string) =>
+    setSelected((current) =>
+      current.includes(id)
+        ? current.filter((value) => value !== id)
+        : [...current, id],
+    );
+
+  const clear = () => setSelected([]);
+
+  /**
+   * The existing per-email `dismissAction`, called once per selected row inside
+   * a single transition.
+   *
+   * Not a new bulk action on purpose: `dismissAction` is the one place the
+   * ownership check lives, and every call re-verifies that the row belongs to
+   * the caller before touching it. A batched variant would be a second code path
+   * around that check. Each call revalidates `/dashboard/layout`, but React
+   * coalesces them into one render pass, and the list is capped at 200 rows.
+   */
+  const dismissSelected = () => {
+    const ids = selected;
+    clear();
+
+    startTransition(async () => {
+      await Promise.all(ids.map((id) => dismissAction(id)));
+    });
+  };
+
   return (
-    <ul className="space-y-3">
-      {emails.map((email) => (
-        <li key={email.id}>
-          <EmailCard email={email} />
-        </li>
-      ))}
-    </ul>
+    <>
+      {selectable && selected.length > 0 && (
+        <div
+          className="mb-4 flex flex-wrap items-center gap-3 rounded-xl px-4 py-3"
+          style={{ background: "var(--color-card)", border: "1px solid var(--color-line)" }}
+        >
+          <span
+            className="text-sm font-medium"
+            style={{ fontFamily: "var(--font-body)", color: "var(--color-ink)" }}
+          >
+            {selected.length} selected
+          </span>
+          <button
+            type="button"
+            onClick={dismissSelected}
+            disabled={isPending}
+            className="btn btn-primary px-4 py-1.5 text-sm disabled:opacity-50"
+            style={{ fontFamily: "var(--font-body)" }}
+          >
+            {isPending ? "Dismissing…" : "Dismiss selected"}
+          </button>
+          <button
+            type="button"
+            onClick={clear}
+            disabled={isPending}
+            className="btn btn-link text-xs"
+            style={{ fontFamily: "var(--font-body)" }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      <ul className="space-y-3">
+        {emails.map((email) => (
+          <li key={email.id}>
+            <EmailCard
+              email={email}
+              selectable={selectable}
+              selected={selected.includes(email.id)}
+              onToggleSelect={toggle}
+              unsubscribeNotice={
+                email.senderAddress
+                  ? (unsubscribeNotices[email.senderAddress] ?? null)
+                  : null
+              }
+            />
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -101,51 +187,64 @@ function SnoozedRow({ email }: { email: SummarizedEmail }) {
 export function HistoryList({
   emails,
   searchable = false,
+  query = "",
 }: {
   emails: HistoryEmail[];
+  /** Only the history bucket is searchable; replied stays a plain archive. */
   searchable?: boolean;
+  /** Echoed back into the input so the box shows what is actually filtered. */
+  query?: string;
 }) {
-  const [search, setSearch] = useState("");
-
-  const filtered = useMemo(() => {
-    if (!searchable || !search.trim()) return emails;
-    const query = search.trim().toLowerCase();
-    return emails.filter(
-      (email) =>
-        email.subject.toLowerCase().includes(query) ||
-        email.sender.toLowerCase().includes(query),
-    );
-  }, [emails, search, searchable]);
-
   return (
     <>
-      {searchable && emails.length > 0 && (
-        <input
-          type="search"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search subject or sender"
-          className="mb-4 w-full rounded-md p-2.5 text-sm focus:outline-none focus:ring-2"
-          style={{
-            fontFamily: "var(--font-body)",
-            color: "var(--color-ink)",
-            border: "1px solid var(--color-line)",
-            background: "var(--color-card)",
-            ["--tw-ring-color" as string]: "var(--color-brand-blue)",
-          }}
-        />
+      {searchable && (
+        // A plain GET form, not client state: filtering happens in SQL, so the
+        // result is a URL that survives reload, sharing, and the back button.
+        // Shown even when empty, or there is no way to start a search once the
+        // current query matches nothing.
+        <form
+          action="/dashboard/history"
+          method="get"
+          className="mb-4 flex flex-wrap items-center gap-2"
+        >
+          <input
+            type="search"
+            name="q"
+            defaultValue={query}
+            placeholder="Search subject, sender, or summary"
+            aria-label="Search history"
+            className="min-w-0 flex-1 rounded-md p-2.5 text-sm focus:outline-none focus:ring-2"
+            style={{
+              fontFamily: "var(--font-body)",
+              color: "var(--color-ink)",
+              border: "1px solid var(--color-line)",
+              background: "var(--color-card)",
+              ["--tw-ring-color" as string]: "var(--color-brand-blue)",
+            }}
+          />
+          <button type="submit" className="btn btn-primary px-4 py-2 text-sm">
+            Search
+          </button>
+          {query && (
+            <Link href="/dashboard/history" className="btn btn-link text-xs">
+              Clear
+            </Link>
+          )}
+        </form>
       )}
 
-      {filtered.length === 0 ? (
+      {emails.length === 0 ? (
         <p
           className="text-sm"
           style={{ fontFamily: "var(--font-body)", color: "var(--color-ink-faint)" }}
         >
-          No matches found.
+          {query
+            ? `No history matches “${query}”.`
+            : "No matches found."}
         </p>
       ) : (
         <ul className="space-y-3">
-          {filtered.map((email) => (
+          {emails.map((email) => (
             <li
               key={email.id}
               className="flex flex-wrap items-center gap-4 rounded-xl p-4"
@@ -162,11 +261,19 @@ export function HistoryList({
                   {email.subject}
                 </p>
                 <p
-                  className="mt-1 text-sm"
+                  className="mt-1 truncate text-sm"
                   style={{ fontFamily: "var(--font-body)", color: "var(--color-ink-faint)" }}
                 >
                   {email.sender}
                 </p>
+                {email.summary && (
+                  <p
+                    className="mt-1.5 line-clamp-2 text-sm"
+                    style={{ fontFamily: "var(--font-body)", color: "var(--color-ink-faint)" }}
+                  >
+                    {email.summary}
+                  </p>
+                )}
               </div>
 
               <span

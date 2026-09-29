@@ -1,33 +1,34 @@
 import { requireUser } from "@/lib/current-session.server";
 import {
+  getAverageReplyTime,
   getDashboardCounts,
   getLatestSummarizationFailure,
   getProviderForUser,
+  getTodaysHandledCounts,
 } from "@/services/dashboard.server";
 import { getTodaysEvents } from "@/services/calendar.server";
 import { formatLocalTime } from "@/lib/date.server";
 import { StatTile } from "@/components/stat-tile";
+import { DiveTile } from "@/components/dive-tile";
+import { ProgressRing } from "@/components/progress-ring";
 
 export default async function DashboardIndex() {
   const user = await requireUser();
 
-  const [counts, provider, aiFailure] = await Promise.all([
+  const [counts, provider, aiFailure, handled, avgReply] = await Promise.all([
     getDashboardCounts(user.id),
     getProviderForUser(user.id),
     getLatestSummarizationFailure(user.id),
+    getTodaysHandledCounts(user.id),
+    getAverageReplyTime(user.id),
   ]);
 
   const tokenRevoked = !!user.tokenRevokedAt;
 
-  let meetings: { eventId: string; title: string; startTime: string }[] = [];
+  let meetings: { eventId: string; title: string; startTime: Date }[] = [];
   if (!tokenRevoked) {
     try {
-      const events = await getTodaysEvents(user.id);
-      meetings = events.map((event) => ({
-        eventId: event.eventId,
-        title: event.title,
-        startTime: event.startTime.toISOString(),
-      }));
+      meetings = await getTodaysEvents(user.id);
     } catch (error) {
       // Calendar is a nice-to-have: a revoked or unscoped token should not
       // take the whole dashboard down. But swallowing the reason silently
@@ -38,24 +39,21 @@ export default async function DashboardIndex() {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      meetings = [];
     }
   }
 
   const total =
     counts.high + counts.medium + counts.low + counts.replied + counts.snoozed;
 
-  const formatTime = (iso: string) => formatLocalTime(iso);
-
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <main className="mx-auto max-w-3xl px-6 py-8">
       {aiFailure && total === 0 && (
         <p
           className="mb-4 text-center text-sm"
-          style={{ fontFamily: "var(--font-body)", color: "var(--color-danger, #b3261e)" }}
+          style={{ fontFamily: "var(--font-body)", color: "var(--color-danger)" }}
         >
           AI summarization is failing, so nothing could be filed.{" "}
-          {aiFailure.errorMessage} — press Refresh to retry.
+          {aiFailure.errorMessage} &mdash; press Refresh to retry.
         </p>
       )}
 
@@ -64,28 +62,78 @@ export default async function DashboardIndex() {
           className="mb-4 text-center text-sm"
           style={{ fontFamily: "var(--font-body)", color: "var(--color-ink-faint)" }}
         >
-          Nothing here yet — press Refresh now to fetch your inbox.
+          Nothing here yet &mdash; press Refresh now to fetch your inbox.
         </p>
       )}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatTile
-          label="Needs a reply"
-          value={counts.high}
-          href="/dashboard/needs-reply"
-          tone="high"
-        />
-        <StatTile
-          label="Worth a glance"
-          value={counts.medium}
-          href="/dashboard/worth-a-glance"
-          tone="medium"
-        />
-        <StatTile label="FYI" value={counts.low} href="/dashboard/fyi" tone="low" />
+      <section
+        className="rounded-2xl p-6"
+        style={{
+          background: "var(--color-card)",
+          border: "1px solid var(--color-line)",
+          boxShadow: "0 1px 2px rgba(0, 0, 0, 0.04)",
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-center gap-8 sm:justify-between">
+          <ProgressRing value={handled.handled} total={handled.total} />
+
+          <div className="flex gap-8">
+            <SummaryStat
+              label="Avg reply time"
+              value={avgReply.label ?? "\u2014"}
+              note={
+                avgReply.samples > 0
+                  ? `across ${avgReply.samples} ${avgReply.samples === 1 ? "reply" : "replies"}`
+                  : "no replies yet"
+              }
+            />
+            <SummaryStat
+              label="Meetings today"
+              value={String(meetings.length)}
+              note={meetings.length === 0 ? "calendar is clear" : "on your calendar"}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-8">
+        <h2
+          className="text-[20px] font-semibold"
+          style={{ fontFamily: "var(--font-display)", color: "var(--color-ink)" }}
+        >
+          Let&apos;s dive in
+        </h2>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <DiveTile
+            href="/dashboard/needs-reply"
+            label="Needs a reply"
+            count={counts.high}
+            hint="Urgent, needs you"
+            tone="high"
+          />
+          <DiveTile
+            href="/dashboard/worth-a-glance"
+            label="Worth a glance"
+            count={counts.medium}
+            hint="Not urgent, but relevant"
+            tone="medium"
+          />
+          <DiveTile
+            href="/dashboard/fyi"
+            label="FYI"
+            count={counts.low}
+            hint="Read-only updates"
+            tone="low"
+          />
+        </div>
+      </section>
+
+      <section className="mt-6 grid grid-cols-3 gap-3">
         <StatTile label="Replied" value={counts.replied} href="/dashboard/replied" />
         <StatTile label="Snoozed" value={counts.snoozed} href="/dashboard/snoozed" />
         <StatTile label="History" value={counts.history} href="/dashboard/history" />
-      </div>
+      </section>
 
       <section className="mt-8">
         <h2
@@ -124,7 +172,7 @@ export default async function DashboardIndex() {
                   className="shrink-0 text-[12px]"
                   style={{ fontFamily: "var(--font-mono)", color: "var(--color-ink-soft)" }}
                 >
-                  {formatTime(meeting.startTime)}
+                  {formatLocalTime(meeting.startTime)}
                 </span>
                 <span
                   className="truncate text-sm font-medium"
@@ -138,5 +186,38 @@ export default async function DashboardIndex() {
         )}
       </section>
     </main>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note: string;
+}) {
+  return (
+    <div>
+      <p
+        className="text-[11px] uppercase tracking-[0.14em]"
+        style={{ fontFamily: "var(--font-mono)", color: "var(--color-ink-faint)" }}
+      >
+        {label}
+      </p>
+      <p
+        className="mt-2 text-[26px] font-semibold leading-none"
+        style={{ fontFamily: "var(--font-display)", color: "var(--color-ink)" }}
+      >
+        {value}
+      </p>
+      <p
+        className="mt-1 text-[11px]"
+        style={{ fontFamily: "var(--font-mono)", color: "var(--color-ink-faint)" }}
+      >
+        {note}
+      </p>
+    </div>
   );
 }

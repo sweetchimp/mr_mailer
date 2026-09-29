@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { prisma } from "../lib/prisma.server";
 import { getValidAccessToken } from "../lib/google-auth.server";
 import { startOfLocalDay } from "../lib/date.server";
@@ -55,7 +56,7 @@ function parseTime(time: GoogleEventTime | undefined): Date | null {
  * This function never mutates `user.tokenRevokedAt`; the only revocation signal
  * is the refresh-time `invalid_grant` in google-auth.server.ts.
  */
-export async function getTodaysEvents(userId: string): Promise<CalendarEvent[]> {
+export async function loadTodaysEvents(userId: string): Promise<CalendarEvent[]> {
   const tokenRecord = await prisma.oAuthToken.findFirst({
     where: { userId },
     orderBy: { createdAt: "desc" },
@@ -146,3 +147,10 @@ export async function getTodaysEvents(userId: string): Promise<CalendarEvent[]> 
     .filter((event): event is CalendarEvent => event !== null)
     .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 }
+
+/**
+ * Request-level memoization: the dashboard layout's ticker and the dashboard
+ * page both need today's meetings, and without this each would spend its own
+ * Calendar API call per render. `cache` is a pass-through outside a render.
+ */
+export const getTodaysEvents = cache(loadTodaysEvents);

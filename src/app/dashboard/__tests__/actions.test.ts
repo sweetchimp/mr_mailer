@@ -10,6 +10,9 @@ const {
   mockQueueAdd,
   mockQueueRemove,
   mockQueueGetJobs,
+  mockRecordReplyFeedback,
+  mockRecordLowPriorityDismissal,
+  mockDismissSenderSuggestion,
   mockRevalidatePath,
 } = vi.hoisted(() => {
   const queue = { add: vi.fn(), remove: vi.fn(), getJobs: vi.fn() };
@@ -27,6 +30,9 @@ const {
     mockQueueAdd: queue.add,
     mockQueueRemove: queue.remove,
     mockQueueGetJobs: queue.getJobs,
+    mockRecordReplyFeedback: vi.fn().mockResolvedValue(undefined),
+    mockRecordLowPriorityDismissal: vi.fn().mockResolvedValue(false),
+    mockDismissSenderSuggestion: vi.fn().mockResolvedValue({ dismissed: true }),
     mockRevalidatePath: vi.fn(),
   };
 });
@@ -55,6 +61,15 @@ vi.mock("@/services/email-provider.server", () => ({
   getEmailProvider: mockGetEmailProvider,
 }));
 
+vi.mock("@/services/reply-feedback.server", () => ({
+  recordReplyFeedback: mockRecordReplyFeedback,
+}));
+
+vi.mock("@/services/sender-preference.server", () => ({
+  recordLowPriorityDismissal: mockRecordLowPriorityDismissal,
+  dismissSenderSuggestion: mockDismissSenderSuggestion,
+}));
+
 vi.mock("@/services/queue.server", () => ({
   getEmailReminderQueue: () => ({
     add: mockQueueAdd,
@@ -69,6 +84,7 @@ vi.mock("@/services/queue.server", () => ({
 import {
   sendReplyAction,
   dismissAction,
+  dismissUnsubscribeSuggestionAction,
   snoozeAction,
   refreshDigestAction,
 } from "../actions";
@@ -80,6 +96,10 @@ const OWNED = {
   userId: "user-1",
   sender: "alice@example.com",
   subject: "Test Subject",
+  suggestedReply: "Sounds good, thanks!",
+  priority: "LOW",
+  senderAddress: "alice@example.com",
+  status: "PENDING",
 };
 
 describe("dashboard server actions", () => {
@@ -94,6 +114,9 @@ describe("dashboard server actions", () => {
     mockQueueAdd.mockResolvedValue({ id: "job" });
     mockQueueRemove.mockResolvedValue(undefined);
     mockQueueGetJobs.mockResolvedValue([]);
+    mockRecordReplyFeedback.mockResolvedValue(undefined);
+    mockRecordLowPriorityDismissal.mockResolvedValue(false);
+    mockDismissSenderSuggestion.mockResolvedValue({ dismissed: true });
   });
 
   describe("ownership (IDOR regression)", () => {
@@ -162,10 +185,12 @@ describe("dashboard server actions", () => {
         "My reply",
       );
       // Providers no longer write this themselves, so Microsoft replies are
-      // marked too.
+      // marked too. sentAt rides along because the weekly summary measures
+      // time-to-reply against it, and there is no other record of the moment
+      // the reply went out.
       expect(mockEmailSummaryUpdate).toHaveBeenCalledWith({
         where: { id: "summary-1" },
-        data: { status: "SENT" },
+        data: { status: "SENT", sentAt: expect.any(Date) },
       });
     });
 
@@ -194,6 +219,54 @@ describe("dashboard server actions", () => {
       expect(result.error).toBe("Reply is too long to send.");
       expect(mockEmailSummaryFindFirst).not.toHaveBeenCalled();
     });
+
+    it("records the edit when the user rewrote the suggestion", async () => {
+      mockEmailSummaryFindFirst.mockResolvedValue(OWNED);
+
+      await sendReplyAction("msg-1", "My reply");
+
+      expect(mockRecordReplyFeedback).toHaveBeenCalledWith({
+        userId: "user-1",
+        emailId: "msg-1",
+        suggestedReply: "Sounds good, thanks!",
+        finalReply: "My reply",
+      });
+    });
+
+    it("does not record feedback when the provider throws", async () => {
+      // The mail never left the mailbox, so there is no edit to learn from.
+      mockEmailSummaryFindFirst.mockResolvedValue(OWNED);
+      mockSendReply.mockRejectedValue(new Error("Gmail API error: 403"));
+
+      await sendReplyAction("msg-1", "My reply");
+
+      expect(mockRecordReplyFeedback).not.toHaveBeenCalled();
+    });
+
+    it("still reports success when the feedback write fails", async () => {
+      // The provider already accepted the message. A rejected feedback insert
+      // must not become a send error, or the user answers it by sending again.
+      mockEmailSummaryFindFirst.mockResolvedValue(OWNED);
+      mockRecordReplyFeedback.mockRejectedValue(new Error("deadlock"));
+
+      const result = await sendReplyAction("msg-1", "My reply");
+
+      expect(result.ok).toBe(true);
+      expect(mockEmailSummaryUpdate).toHaveBeenCalled();
+    });
+
+    it("does not record feedback for a summary with no suggestion", async () => {
+      mockEmailSummaryFindFirst.mockResolvedValue({
+        ...OWNED,
+        suggestedReply: null,
+      });
+
+      await sendReplyAction("msg-1", "My reply");
+
+      expect(mockRecordReplyFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({ suggestedReply: null }),
+      );
+    });
   });
 
   describe("dismissAction", () => {
@@ -204,8 +277,82 @@ describe("dashboard server actions", () => {
 
       expect(mockEmailSummaryUpdate).toHaveBeenCalledWith({
         where: { id: "summary-1" },
-        data: { status: "DISMISSED", snoozedUntil: null },
+        data: { status: "DISMISSED", snoozedUntil: null, dismissedAt: expect.any(Date) },
       });
+    });
+
+    it("reports the sender signal for a LOW-priority dismissal", async () => {
+      mockEmailSummaryFindFirst.mockResolvedValue(OWNED);
+
+      await dismissAction("msg-1");
+
+      expect(mockRecordLowPriorityDismissal).toHaveBeenCalledWith({
+        userId: "user-1",
+        sender: "alice@example.com",
+        senderAddress: "alice@example.com",
+        priority: "LOW",
+        alreadyDismissed: false,
+      });
+    });
+
+    it("flags an already-dismissed row so a racing dismiss cannot double count", async () => {
+      mockEmailSummaryFindFirst.mockResolvedValue({
+        ...OWNED,
+        status: "DISMISSED",
+      });
+
+      await dismissAction("msg-1");
+
+      expect(mockRecordLowPriorityDismissal).toHaveBeenCalledWith(
+        expect.objectContaining({ alreadyDismissed: true }),
+      );
+    });
+
+    it("still reports success when the sender-signal write fails", async () => {
+      // The email is already dismissed; a failed counter write must not read as
+      // a failure the user retries.
+      mockEmailSummaryFindFirst.mockResolvedValue(OWNED);
+      mockRecordLowPriorityDismissal.mockRejectedValue(new Error("deadlock"));
+
+      const result = await dismissAction("msg-1");
+
+      expect(result.ok).toBe(true);
+      expect(mockEmailSummaryUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe("dismissUnsubscribeSuggestionAction", () => {
+    it("scopes the decline to the caller", async () => {
+      const result = await dismissUnsubscribeSuggestionAction("news@example.com");
+
+      expect(result.ok).toBe(true);
+      expect(mockDismissSenderSuggestion).toHaveBeenCalledWith(
+        "user-1",
+        "news@example.com",
+      );
+    });
+
+    it("rejects an empty address without querying", async () => {
+      const result = await dismissUnsubscribeSuggestionAction("   ");
+
+      expect(result.ok).toBe(false);
+      expect(mockDismissSenderSuggestion).not.toHaveBeenCalled();
+    });
+
+    it("rejects an absurdly long address without querying", async () => {
+      const result = await dismissUnsubscribeSuggestionAction("a".repeat(321));
+
+      expect(result.ok).toBe(false);
+      expect(mockDismissSenderSuggestion).not.toHaveBeenCalled();
+    });
+
+    it("reports a write failure", async () => {
+      mockDismissSenderSuggestion.mockRejectedValue(new Error("deadlock"));
+
+      const result = await dismissUnsubscribeSuggestionAction("news@example.com");
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("deadlock");
     });
   });
 

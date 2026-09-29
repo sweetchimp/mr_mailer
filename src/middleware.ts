@@ -48,7 +48,17 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // /admin is included so an unauthenticated visitor is redirected to /login
-  // rather than landing on a page whose requireUser() then throws. The
-  // middleware is only a redirect guard either way.
-  matcher: ["/dashboard/:path*", "/admin/:path*"],
+  // rather than landing on a page whose requireUser() then throws. /minutes,
+  // /insights and /weekly-summary are here for the same reason, and for the
+  // second job above: without them, a user reading minutes, their reply history
+  // or their weekly numbers gets no session sliding and is logged out at the
+  // 30-minute mark despite having just interacted with the app. The middleware is
+  // only a redirect guard either way.
+  matcher: [
+    "/dashboard/:path*",
+    "/minutes/:path*",
+    "/admin/:path*",
+    "/insights/:path*",
+    "/weekly-summary/:path*",
+  ],
 };

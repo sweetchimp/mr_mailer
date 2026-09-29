@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma.server";
 import { requireUser } from "@/lib/current-session.server";
 import { hasManualDigestInFlight, manualDigestJobName } from "@/lib/manual-digest";
 import { getEmailProvider } from "@/services/email-provider.server";
+import { recordReplyFeedback } from "@/services/reply-feedback.server";
+import { dismissSenderSuggestion, recordLowPriorityDismissal } from "@/services/sender-preference.server";
 import {
   getEmailReminderQueue,
   getMorningDigestQueue,
@@ -15,8 +17,9 @@ const MAX_REPLY_CHARS = 20_000;
 
 export interface ActionResult {
   ok: boolean;
-  intent: "refresh" | "send" | "dismiss" | "snooze";
+  intent: "refresh" | "send" | "dismiss" | "snooze" | "dismiss-suggestion";
   emailId?: string;
+  senderAddress?: string;
   error?: string;
 }
 
@@ -24,8 +27,9 @@ function fail(
   intent: ActionResult["intent"],
   error: string,
   emailId?: string,
+  senderAddress?: string,
 ): ActionResult {
-  return { ok: false, intent, error, emailId };
+  return { ok: false, intent, error, emailId, senderAddress };
 }
 
 /**
@@ -112,8 +116,18 @@ export async function sendReplyAction(
 
     await prisma.emailSummary.update({
       where: { id: summary.id },
-      data: { status: "SENT" },
+      data: { status: "SENT", sentAt: new Date() },
     });
+
+    // The message is already accepted by the provider at this point, so a
+    // failed feedback write must not turn a delivered reply into an error the
+    // user answers by sending again.
+    await recordReplyFeedback({
+      userId: user.id,
+      emailId: summary.gmailMessageId,
+      suggestedReply: summary.suggestedReply,
+      finalReply: text,
+    }).catch(() => {});
 
     refreshDashboard();
     return { ok: true, intent: "send", emailId };
@@ -134,9 +148,20 @@ export async function dismissAction(emailId: string): Promise<ActionResult> {
     await prisma.emailSummary.update({
       where: { id: summary.id },
       // Clear snoozedUntil too: leaving it set left a stale "reminds you at"
-      // timestamp on an email that is no longer snoozed.
-      data: { status: "DISMISSED", snoozedUntil: null },
+      // timestamp on an email that is no longer snoozed. dismissedAt is the
+      // handling timestamp the weekly summary counts against.
+      data: { status: "DISMISSED", snoozedUntil: null, dismissedAt: new Date() },
     });
+
+    // The email is already dismissed at this point, so a failure to record the
+    // sender signal must not turn the action into an error the user retries.
+    await recordLowPriorityDismissal({
+      userId: user.id,
+      sender: summary.sender,
+      senderAddress: summary.senderAddress,
+      priority: summary.priority,
+      alreadyDismissed: summary.status === "DISMISSED",
+    }).catch(() => {});
 
     refreshDashboard();
     return { ok: true, intent: "dismiss", emailId };
@@ -144,6 +169,34 @@ export async function dismissAction(emailId: string): Promise<ActionResult> {
     const errorMessage =
       error instanceof Error ? error.message : String(error);
     return fail("dismiss", errorMessage, emailId);
+  }
+}
+
+/**
+ * Declines the "consider unsubscribing" banner for one sender, permanently.
+ *
+ * Scoped by `userId` inside the query rather than matched on a unique key alone,
+ * because the address comes from the client.
+ */
+export async function dismissUnsubscribeSuggestionAction(
+  senderAddress: string,
+): Promise<ActionResult> {
+  const user = await requireUser();
+
+  const address = (senderAddress ?? "").trim();
+  if (!address || address.length > 320) {
+    return fail("dismiss-suggestion", "Invalid sender", senderAddress);
+  }
+
+  try {
+    await dismissSenderSuggestion(user.id, address);
+
+    refreshDashboard();
+    return { ok: true, intent: "dismiss-suggestion", senderAddress: address };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    return fail("dismiss-suggestion", errorMessage, undefined, address);
   }
 }
 

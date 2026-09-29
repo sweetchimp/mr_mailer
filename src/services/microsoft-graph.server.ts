@@ -130,4 +130,36 @@ export class MicrosoftGraphProvider implements EmailProvider {
 
     // The `status = SENT` transition is the caller's job, not the provider's.
   }
+
+  async sendNewMessage(
+    userId: string,
+    message: { to: string; subject: string; body: string },
+  ): Promise<void> {
+    const accessToken = await this.getValidAccessToken(userId);
+
+    // `/me/sendMail` rather than the `/reply` action above, which is scoped to
+    // an existing message and cannot start a new conversation.
+    const res = await fetch(`${GRAPH_BASE}/me/sendMail`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: {
+          subject: message.subject,
+          body: { contentType: "Text", content: message.body },
+          toRecipients: [{ emailAddress: { address: message.to } }],
+        },
+        // Without this the sent copy lives nowhere the user can see it, which
+        // makes a message this app sent on their behalf look fabricated.
+        saveToSentItems: true,
+      }),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Microsoft Graph API error: ${res.status} ${errorText}`);
+    }
+  }
 }

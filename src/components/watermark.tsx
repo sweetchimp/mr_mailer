@@ -1,3 +1,5 @@
+import { MrMailerMark } from "@/components/mr-mailer-mark";
+
 export function Watermark() {
   return (
     <div
@@ -14,20 +16,9 @@ export function Watermark() {
         overflow: "hidden",
       }}
     >
-      <span
-        style={{
-          fontFamily: "var(--font-display)",
-          fontWeight: 700,
-          fontSize: "clamp(120px, 24vw, 360px)",
-          lineHeight: 1,
-          letterSpacing: "-0.02em",
-          color: "var(--color-ink)",
-          opacity: 0.025,
-          whiteSpace: "nowrap",
-        }}
-      >
-        Mr Mailer
-      </span>
+      <div style={{ transform: "rotate(-12deg)", opacity: 0.035 }}>
+        <MrMailerMark size={640} />
+      </div>
     </div>
   );
 }

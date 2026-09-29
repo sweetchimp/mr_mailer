@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import Image from "next/image";
 import { getSessionCookieName, verifySession } from "@/lib/session.server";
 import { ProviderButton } from "@/components/provider-button";
+import { MrMailerLogo } from "@/components/mr-mailer-logo";
 
 type LoginPageProps = {
   searchParams: Promise<{ error?: string }>;
@@ -81,7 +81,7 @@ export default async function Login({ searchParams }: LoginPageProps) {
           inset: 0,
           pointerEvents: "none",
           background:
-            "radial-gradient(ellipse at 15% 0%, rgba(21,94,239,0.10) 0%, transparent 45%), radial-gradient(ellipse at 95% 25%, rgba(109,93,251,0.12) 0%, transparent 45%), radial-gradient(ellipse at 50% 110%, rgba(34,211,238,0.10) 0%, transparent 50%)",
+            "radial-gradient(ellipse at 12% 0%, rgba(31,58,95,0.16) 0%, transparent 45%), radial-gradient(ellipse at 95% 20%, rgba(192,138,46,0.12) 0%, transparent 45%), radial-gradient(ellipse at 50% 115%, rgba(59,93,140,0.14) 0%, transparent 50%)",
         }}
       />
 
@@ -91,31 +91,13 @@ export default async function Login({ searchParams }: LoginPageProps) {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: "12px",
           padding: "18px 24px",
           background: "var(--color-surface)",
           borderBottom: "1px solid var(--color-line)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <Image
-            src="/logo.png"
-            alt="Mr Mailer logo"
-            width={36}
-            height={36}
-            style={{ display: "block", objectFit: "contain" }}
-          />
-          <span
-            style={{
-              fontFamily: "var(--font-display)",
-              fontWeight: 600,
-              fontSize: "22px",
-              color: "var(--color-ink)",
-              letterSpacing: "-0.02em",
-            }}
-          >
-            Mr Mailer
-          </span>
-        </div>
+        <MrMailerLogo size={34} />
         <span
           style={{
             fontSize: "12px",
@@ -143,12 +125,25 @@ export default async function Login({ searchParams }: LoginPageProps) {
           textAlign: "center",
         }}
       >
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "11px",
+            letterSpacing: "0.22em",
+            textTransform: "uppercase",
+            color: "var(--color-brand-gold)",
+          }}
+        >
+          Inbox, organized
+        </span>
+
         <h1
           style={{
+            marginTop: "14px",
             fontFamily: "var(--font-display)",
             fontWeight: 600,
-            fontSize: "clamp(30px, 5vw, 44px)",
-            lineHeight: 1.15,
+            fontSize: "clamp(32px, 5vw, 46px)",
+            lineHeight: 1.12,
             color: "var(--color-ink)",
             letterSpacing: "-0.02em",
             maxWidth: "560px",
@@ -156,9 +151,21 @@ export default async function Login({ searchParams }: LoginPageProps) {
         >
           Your work, intelligently organized.
         </h1>
+
+        <div
+          aria-hidden
+          style={{
+            marginTop: "20px",
+            height: "3px",
+            width: "56px",
+            borderRadius: "999px",
+            background: "var(--color-brand-gold)",
+          }}
+        />
+
         <p
           style={{
-            marginTop: "16px",
+            marginTop: "20px",
             fontSize: "16px",
             lineHeight: 1.6,
             color: "var(--color-ink-soft)",
@@ -166,8 +173,9 @@ export default async function Login({ searchParams }: LoginPageProps) {
             maxWidth: "440px",
           }}
         >
-          Mr Mailer turns your inbox into a clear plan — surfacing what needs a reply, what&apos;s
-          worth a glance, and what&apos;s just FYI. Each morning, on your terms.
+          Mr Mailer turns your inbox into a clear plan — surfacing what needs a
+          reply, what&apos;s worth a glance, and what&apos;s just FYI. Each
+          morning, on your terms.
         </p>
       </main>
 
@@ -180,7 +188,18 @@ export default async function Login({ searchParams }: LoginPageProps) {
           padding: "0 20px 48px",
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "14px",
+            padding: "24px",
+            borderRadius: "18px",
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-line)",
+            boxShadow: "0 12px 32px rgba(10, 20, 35, 0.07)",
+          }}
+        >
           <ProviderButton
             href="/auth/google/login"
             icon={
@@ -214,27 +233,34 @@ export default async function Login({ searchParams }: LoginPageProps) {
                 <rect x="2" y="2" width="9.5" height="9.5" fill="#F25022" />
                 <rect x="12.5" y="2" width="9.5" height="9.5" fill="#7FBA00" />
                 <rect x="2" y="12.5" width="9.5" height="9.5" fill="#00A4EF" />
-                <rect x="12.5" y="12.5" width="9.5" height="9.5" fill="#FFB900" />
+                <rect
+                  x="12.5"
+                  y="12.5"
+                  width="9.5"
+                  height="9.5"
+                  fill="#FFB900"
+                />
               </svg>
             }
           >
             Continue with Microsoft
           </ProviderButton>
-        </div>
 
-        {errorMessage && (
-          <p
-            style={{
-              marginTop: "20px",
-              fontSize: "13px",
-              textAlign: "center",
-              color: "var(--color-priority-high-text)",
-              fontFamily: "var(--font-body)",
-            }}
-          >
-            {errorMessage}
-          </p>
-        )}
+          {errorMessage && (
+            <p
+              role="alert"
+              style={{
+                fontSize: "13px",
+                lineHeight: 1.5,
+                textAlign: "center",
+                color: "var(--color-priority-high-text)",
+                fontFamily: "var(--font-body)",
+              }}
+            >
+              {errorMessage}
+            </p>
+          )}
+        </div>
 
         <p
           style={{

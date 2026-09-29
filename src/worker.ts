@@ -3,8 +3,12 @@ import { Worker } from "bullmq";
 import { getRedisConnection } from "./lib/redis.server";
 import { prisma } from "./lib/prisma.server";
 import { runDigestPipeline } from "./services/digest.server";
+import { sendWeeklyDigest } from "./services/weekly-digest.server";
 import { unsnoozeEmail } from "./services/reminder.server";
-import { getMorningDigestQueue } from "./services/queue.server";
+import {
+  getMorningDigestQueue,
+  getWeeklyDigestQueue,
+} from "./services/queue.server";
 import { cleanupOldRecords } from "./services/cleanup.server";
 import { TokenRevokedError } from "./lib/google-auth.server";
 
@@ -21,10 +25,14 @@ const connection = getRedisConnection();
  */
 const SERVER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+/** Sunday 18:00 — see the scheduler registration for why this is not a setting. */
+const WEEKLY_DIGEST_CRON = "0 18 * * 0";
+
 const startTime = Date.now();
 let processedJobs = 0;
 let failedJobs = 0;
 let unsnoozedJobs = 0;
+let weeklyDigestsSent = 0;
 
 function log(level: "info" | "error" | "warn", message: string) {
   const ts = new Date().toISOString();
@@ -191,12 +199,62 @@ reminderWorker.on("failed", (job, err) => {
   log("error", `Reminder ${job?.id} failed: ${err.message}`);
 });
 
+/**
+ * Consumer for the `weekly-digest` queue.
+ *
+ * Separate from `morning-digest` rather than a branch inside it: the two run on
+ * different cadences for different people, and folding a Sunday-evening
+ * opt-in-optional job into the daily pipeline would mean every user paid for a
+ * summary most of them never asked to receive. `sendWeeklyDigest` reports
+ * "opted out" as a normal result, not an error.
+ */
+const weeklyWorker = new Worker(
+  "weekly-digest",
+  async (job) => {
+    const { userId } = job.data as { userId: string };
+
+    try {
+      const result = await sendWeeklyDigest(userId);
+
+      if (result.sent) {
+        weeklyDigestsSent++;
+        log("info", `Weekly summary sent for user ${userId}`);
+      } else {
+        log("info", `Weekly summary skipped for user ${userId}: ${result.reason}`);
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      log("error", `Weekly summary failed for user ${userId}: ${errorMessage}`);
+      await recordFailure(userId, "weekly-digest", "send", errorMessage, job.id);
+
+      throw error;
+    }
+  },
+  {
+    connection,
+    concurrency: 1,
+    limiter: { max: 10, duration: 60_000 },
+  },
+);
+
+weeklyWorker.on("completed", (job) => {
+  const userId = (job.data as { userId?: string } | undefined)?.userId;
+  log("info", `Weekly digest ${job.id} completed for user ${userId}`);
+});
+
+weeklyWorker.on("failed", (job, err) => {
+  log("error", `Weekly digest ${job?.id} failed: ${err.message}`);
+});
+
 async function registerRepeatableJobs() {
   const users = await prisma.user.findMany({
     select: { id: true, preferredMorningTime: true },
   });
 
   const digestQueue = getMorningDigestQueue();
+  const weeklyQueue = getWeeklyDigestQueue();
 
   for (const user of users) {
     const [hour, minute] = (user.preferredMorningTime ?? "07:00").split(":");
@@ -213,6 +271,18 @@ async function registerRepeatableJobs() {
     log(
       "info",
       `Registered daily digest for user ${user.id} at ${user.preferredMorningTime} (${SERVER_TZ})`,
+    );
+
+    // Sunday 18:00. Fixed rather than user-configurable, and unlike
+    // `preferredMorningTime` it is not a "when do you start work" preference —
+    // it is a delivery slot, so there is nothing to ask about.
+    await weeklyQueue.upsertJobScheduler(
+      `weekly-digest-${user.id}`,
+      { pattern: WEEKLY_DIGEST_CRON, tz: SERVER_TZ },
+      {
+        name: `weekly-${user.id}`,
+        data: { userId: user.id },
+      },
     );
   }
 
@@ -238,6 +308,7 @@ async function gracefulShutdown(signal: string) {
   try {
     await worker.close();
     await reminderWorker.close();
+    await weeklyWorker.close();
     await connection.quit();
     log("info", "All connections closed");
   } catch (err) {
@@ -259,6 +330,6 @@ setInterval(() => {
   const uptime = Math.floor((Date.now() - startTime) / 1000);
   log(
     "info",
-    `Health: uptime=${uptime}s, processed=${processedJobs}, failed=${failedJobs}, unsnoozed=${unsnoozedJobs}`,
+    `Health: uptime=${uptime}s, processed=${processedJobs}, failed=${failedJobs}, unsnoozed=${unsnoozedJobs}, weeklySent=${weeklyDigestsSent}`,
   );
 }, 300_000);

@@ -1,4 +1,4 @@
-import Image from "next/image";
+import { MrMailerMark } from "@/components/mr-mailer-mark";
 
 export function MrMailerLogo({
   size = 36,
@@ -14,13 +14,7 @@ export function MrMailerLogo({
       className={`inline-flex items-center gap-2.5 ${className ?? ""}`}
       style={{ color: light ? "#FFFFFF" : "var(--color-ink)" }}
     >
-      <Image
-        src="/logo.png"
-        alt="Mr Mailer logo"
-        width={size}
-        height={size}
-        style={{ display: "block", objectFit: "contain" }}
-      />
+      <MrMailerMark size={size} />
       <span
         className="font-semibold tracking-tight"
         style={{

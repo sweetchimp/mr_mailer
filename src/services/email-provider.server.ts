@@ -22,6 +22,20 @@ export interface EmailMessage {
 export interface EmailProvider {
   getTodaysEmails(userId: string): Promise<EmailMessage[]>;
   sendReply(userId: string, emailId: string, replyText: string): Promise<void>;
+  /**
+   * Starts a brand-new message rather than replying in a thread.
+   *
+   * Distinct from `sendReply` for a structural reason, not a stylistic one:
+   * Graph's `/reply` and Gmail's hardcoded `To:`/`Re:` pair are both welded to
+   * an existing conversation, so neither can produce a standalone mail. Only
+   * the weekly summary needs this today, and both providers already hold the
+   * scope it requires (`gmail.send` / `Mail.Send`), so no user is re-prompted
+   * for consent.
+   */
+  sendNewMessage(
+    userId: string,
+    message: { to: string; subject: string; body: string },
+  ): Promise<void>;
   /** `messageRef` must be the `EmailMessage.id` returned by `getTodaysEmails`. */
   getFullBody(userId: string, messageRef: string): Promise<string>;
   getValidAccessToken(userId: string): Promise<string>;

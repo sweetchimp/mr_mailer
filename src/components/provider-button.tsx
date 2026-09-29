@@ -4,30 +4,27 @@ interface ProviderButtonProps {
   children: React.ReactNode;
 }
 
+/**
+ * `btn btn-outline` supplies the surface, border, radius, transitions and the
+ * hover border/color change; only layout and an ink (rather than ink-soft)
+ * label are set inline so the sign-in CTAs stay the highest-contrast thing on
+ * the page. Setting `background` inline would beat the class's hover rule.
+ */
 export function ProviderButton({ href, icon, children }: ProviderButtonProps) {
   return (
     <a
       href={href}
-      className="btn w-full"
+      className="btn btn-outline w-full"
       style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "13px 20px",
-        background: "var(--color-card)",
-        border: "1px solid var(--color-line)",
-        borderRadius: "10px",
+        padding: "14px 20px",
         color: "var(--color-ink)",
         fontSize: "15px",
         fontWeight: 500,
-        cursor: "pointer",
-        transition: "all 0.2s ease",
         fontFamily: "var(--font-body)",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-        textDecoration: "none",
+        boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
       }}
     >
-      <span style={{ display: "inline-flex", marginRight: "10px" }}>{icon}</span>
+      <span style={{ display: "inline-flex" }}>{icon}</span>
       {children}
     </a>
   );

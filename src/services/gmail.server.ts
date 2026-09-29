@@ -88,6 +88,38 @@ export class GmailProvider implements EmailProvider {
       replyText,
     ].join("\r\n");
 
+    await this.postRaw(accessToken, rawMessage);
+
+    // The `status = SENT` transition is the caller's job, not the provider's,
+    // so that Microsoft Graph replies get marked too.
+  }
+
+  async sendNewMessage(
+    userId: string,
+    message: { to: string; subject: string; body: string },
+  ): Promise<void> {
+    const accessToken = await this.getValidAccessToken(userId);
+
+    await this.postRaw(
+      accessToken,
+      [
+        `To: ${message.to}`,
+        `Subject: ${message.subject}`,
+        `Content-Type: text/plain; charset=utf-8`,
+        ``,
+        message.body,
+      ].join("\r\n"),
+    );
+  }
+
+  /**
+   * Base64url-encodes a raw RFC 822 message and hands it to `messages/send`.
+   *
+   * Shared by `sendReply` and `sendNewMessage` because the transport is
+   * identical and only the headers differ — duplicating the encode-and-POST
+   * dance would leave two places to fix a Gmail API change.
+   */
+  private async postRaw(accessToken: string, rawMessage: string): Promise<void> {
     const encodedMessage = Buffer.from(rawMessage)
       .toString("base64")
       .replace(/\+/g, "-")
@@ -112,9 +144,6 @@ export class GmailProvider implements EmailProvider {
       const errorText = await sendRes.text();
       throw new Error(`Gmail API error: ${sendRes.status} ${errorText}`);
     }
-
-    // The `status = SENT` transition is the caller's job, not the provider's,
-    // so that Microsoft Graph replies get marked too.
   }
 
   async getFullBody(userId: string, messageRef: string): Promise<string> {

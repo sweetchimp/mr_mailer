@@ -3,12 +3,14 @@ import { getRedisConnection } from "../lib/redis.server";
 
 type QueueName =
   | "morning-digest"
+  | "weekly-digest"
   | "email-reminder"
   | "meeting-reminder"
   | "schedule-block";
 
 const REMOVE_ON_COMPLETE: Record<QueueName, number> = {
   "morning-digest": 50,
+  "weekly-digest": 20,
   "email-reminder": 20,
   "meeting-reminder": 50,
   "schedule-block": 50,
@@ -48,6 +50,10 @@ export function getMorningDigestQueue(): Queue {
 
 export function getEmailReminderQueue(): Queue {
   return queue("email-reminder");
+}
+
+export function getWeeklyDigestQueue(): Queue {
+  return queue("weekly-digest");
 }
 
 /** Not yet consumed — reserved for the meeting-reminder worker job. */

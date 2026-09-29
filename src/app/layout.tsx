@@ -12,6 +12,14 @@ const inter = localFont({
   display: "swap",
 });
 
+// Headings, the greeting, and large numerals. Vendored from the same
+// @fontsource variable package as Inter, matching the wght-axis file it ships.
+const sourceSerif = localFont({
+  variable: "--font-serif",
+  src: "./fonts/source-serif-4-latin-wght-normal.woff2",
+  display: "swap",
+});
+
 const plexMono = localFont({
   variable: "--font-plex-mono",
   src: [
@@ -56,7 +64,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${plexMono.variable} h-full antialiased`}
+      className={`${inter.variable} ${plexMono.variable} ${sourceSerif.variable} h-full antialiased`}
       // The theme script below sets data-theme before React hydrates, so this
       // element always carries an attribute the server HTML did not have.
       // Suppress the check rather than patch — patching would fight the script.

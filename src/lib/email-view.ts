@@ -12,6 +12,12 @@ export interface SummarizedEmail {
   id: string;
   subject: string;
   sender: string;
+  /**
+   * Normalized address, used to look up an unsubscribe suggestion. Null on rows
+   * summarized before the column existed, and on any sender string we could not
+   * parse an address out of.
+   */
+  senderAddress: string | null;
   /** The AI summary. The original implementation reused this as the card's
    *  "snippet", since EmailSummary does not persist the raw body. */
   snippet: string;
@@ -32,6 +38,31 @@ export interface HistoryEmail {
   sender: string;
   status: Status;
   date: string;
+  /** The AI summary, so a search hit on it is visible in the result row. */
+  summary: string;
+}
+
+/** Long enough for any real query, short enough to bound the LIKE escape. */
+export const MAX_SEARCH_CHARS = 100;
+
+/**
+ * Cleans a raw `?q=` value, or returns null when there is nothing to search for.
+ *
+ * Returns null rather than an empty string for blank input so the caller can
+ * spread a conditional into the query and get the no-search path exactly, rather
+ * than a `contains: ""` that matches every row and looks like the filter is on.
+ *
+ * Collapses internal whitespace because a URL-encoded `"budget  review"` should
+ * behave like the phrase a person typed, not two independent substrings.
+ */
+export function normalizeSearch(raw: string | string[] | undefined): string | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return null;
+
+  const collapsed = value.trim().replace(/\s+/g, " ");
+  if (!collapsed) return null;
+
+  return collapsed.slice(0, MAX_SEARCH_CHARS);
 }
 
 export type EmailBucket =

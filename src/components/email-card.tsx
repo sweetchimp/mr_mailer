@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import {
   dismissAction,
+  dismissUnsubscribeSuggestionAction,
   sendReplyAction,
   snoozeAction,
 } from "@/app/dashboard/actions";
@@ -137,11 +138,25 @@ function SnoozeButton({
   );
 }
 
-export function EmailCard({ email }: { email: SummarizedEmail }) {
+export function EmailCard({
+  email,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+  unsubscribeNotice = null,
+}: {
+  email: SummarizedEmail;
+  /** Bulk-dismiss affordance. Only set on the Worth a glance and FYI buckets. */
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
+  unsubscribeNotice?: { senderName: string | null; count: number } | null;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [suggestionGone, setSuggestionGone] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const hasReplied = email.status === "SENT";
@@ -170,6 +185,17 @@ export function EmailCard({ email }: { email: SummarizedEmail }) {
   const handleDismiss = () =>
     run(() => dismissAction(email.id), "Dismissed");
 
+  // Hidden locally first so the banner disappears on tap; `revalidatePath` then
+  // refetches the page. A failure re-renders from the server and brings it back.
+  const showSuggestion = !!unsubscribeNotice && !suggestionGone;
+  const dismissSuggestion = () => {
+    if (!email.senderAddress) return;
+    setSuggestionGone(true);
+    startTransition(async () => {
+      await dismissUnsubscribeSuggestionAction(email.senderAddress!);
+    });
+  };
+
   const dateLabel = email.date
     ? new Date(email.date).toLocaleDateString("en-US", {
         month: "short",
@@ -194,6 +220,21 @@ export function EmailCard({ email }: { email: SummarizedEmail }) {
       onClick={expanded ? undefined : () => setExpanded(true)}
     >
       <div className="flex items-start justify-between gap-4">
+        {selectable && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect?.(email.id)}
+            // The collapsed card expands on any click (see the onClick on the
+            // wrapper below), so without this every tick would also open the
+            // card. Also the reason it is a sibling of the clickable area rather
+            // than inside the header text.
+            onClick={(event) => event.stopPropagation()}
+            aria-label={`Select ${email.subject}`}
+            className="mt-1 h-4 w-4 shrink-0 cursor-pointer"
+            style={{ accentColor: "var(--color-brand-blue)" }}
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3
@@ -240,6 +281,32 @@ export function EmailCard({ email }: { email: SummarizedEmail }) {
           >
             {email.sender}
           </p>
+
+          {showSuggestion && unsubscribeNotice && (
+            <div
+              className="mb-3 rounded-r-md border-l-[3px] p-3"
+              style={{ background: TONES.LOW.bg, borderLeftColor: TONES.LOW.line }}
+            >
+              <p
+                className="text-sm"
+                style={{ fontFamily: "var(--font-body)", color: TONES.LOW.text }}
+              >
+                You&apos;ve dismissed {unsubscribeNotice.count} low-priority{" "}
+                {unsubscribeNotice.count === 1 ? "email" : "emails"} from{" "}
+                {unsubscribeNotice.senderName ?? email.senderAddress}. Consider
+                unsubscribing.
+              </p>
+              <button
+                type="button"
+                onClick={dismissSuggestion}
+                disabled={isPending}
+                className="btn btn-link mt-1 text-xs"
+                style={{ fontFamily: "var(--font-body)", color: TONES.LOW.text }}
+              >
+                Don&apos;t show this again
+              </button>
+            </div>
+          )}
 
           {email.summary ? (
             <div

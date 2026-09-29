@@ -20,8 +20,8 @@ export default function GlobalError({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#F7F9FC",
-          color: "#0B1B3D",
+          background: "#F3F4F7",
+          color: "#181B21",
           fontFamily:
             "ui-sans-serif, system-ui, -apple-system, sans-serif",
         }}
@@ -46,7 +46,7 @@ export default function GlobalError({
               padding: "10px 20px",
               borderRadius: "10px",
               border: "none",
-              background: "#155EEF",
+              background: "#1F3A5F",
               color: "#fff",
               fontSize: "0.9rem",
               fontWeight: 500,

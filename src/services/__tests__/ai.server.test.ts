@@ -1,10 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { mockGroqCreate, mockFindMany, mockFindUnique, mockUpsert } = vi.hoisted(() => ({
+const {
+  mockGroqCreate,
+  mockFindMany,
+  mockFindUnique,
+  mockUpsert,
+  mockGroupBy,
+  mockSenderFindMany,
+} = vi.hoisted(() => ({
   mockGroqCreate: vi.fn(),
   mockFindMany: vi.fn().mockResolvedValue([]),
   mockFindUnique: vi.fn().mockResolvedValue(null),
   mockUpsert: vi.fn(),
+  mockGroupBy: vi.fn().mockResolvedValue([]),
+  mockSenderFindMany: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("groq-sdk", () => {
@@ -22,6 +31,10 @@ vi.mock("../../lib/prisma.server", () => ({
         findMany: mockFindMany,
         findUnique: mockFindUnique,
         upsert: mockUpsert,
+        groupBy: mockGroupBy,
+      },
+      senderPreference: {
+        findMany: mockSenderFindMany,
       },
     };
   },
@@ -85,6 +98,12 @@ const unusableResponses: Array<[string, unknown]> = [
 
 type GroqArgs = { messages: Array<{ role: string; content: string }> };
 
+/** The user-message text sent on the first Groq call, for prompt assertions. */
+function userContent(): string {
+  const args = mockGroqCreate.mock.calls[0]?.[0] as GroqArgs | undefined;
+  return args?.messages.find((m) => m.role === "user")?.content ?? "";
+}
+
 /** Fails only the email whose subject matches, so the good one still lands. */
 function respondExcept(email: EmailMessage, response: unknown) {
   mockGroqCreate.mockImplementation(async ({ messages }: GroqArgs) => {
@@ -102,6 +121,8 @@ describe("summarizeEmails (AI summary parsing)", () => {
     mockGroqCreate.mockReset();
     mockFindMany.mockResolvedValue([]);
     mockFindUnique.mockResolvedValue(null);
+    mockGroupBy.mockResolvedValue([]);
+    mockSenderFindMany.mockResolvedValue([]);
     // The Groq client is built on first use rather than at import time, so the
     // key has to be present when a test actually calls the API — which is what
     // makes the missing-key path below a real assertion rather than an
@@ -207,5 +228,53 @@ describe("summarizeEmails (AI summary parsing)", () => {
   it("does not throw when there is nothing to summarize", async () => {
     await expect(summarizeEmails("user-1", [])).resolves.toEqual([]);
     expect(mockGroqCreate).not.toHaveBeenCalled();
+  });
+
+  it("tells the model how this user has treated the sender before", async () => {
+    mockGroqCreate.mockResolvedValue(goodResponse);
+    mockGroupBy.mockResolvedValue([
+      {
+        senderAddress: "alice@example.com",
+        priority: "LOW",
+        status: "DISMISSED",
+        _count: { _all: 6 },
+      },
+      {
+        senderAddress: "alice@example.com",
+        priority: "LOW",
+        status: "PENDING",
+        _count: { _all: 2 },
+      },
+    ]);
+
+    await summarizeEmails("user-1", [baseEmail]);
+
+    expect(userContent()).toContain("Sender history");
+    expect(userContent()).toContain("8 past emails");
+    expect(userContent()).toContain("8 LOW, 0 MEDIUM, 0 HIGH");
+    expect(userContent()).toContain("dismissed 6 of them");
+  });
+
+  it("leaves the sender note out when there is no history", async () => {
+    mockGroqCreate.mockResolvedValue(goodResponse);
+
+    await summarizeEmails("user-1", [baseEmail]);
+
+    expect(userContent()).toContain(`From: ${baseEmail.sender}`);
+    expect(userContent()).not.toContain("Sender history");
+  });
+
+  it("loads sender history once for the whole batch, not per email", async () => {
+    mockGroqCreate.mockResolvedValue(goodResponse);
+    const other: EmailMessage = {
+      ...baseEmail,
+      id: "msg-2",
+      sender: "bob@example.com",
+    };
+
+    await summarizeEmails("user-1", [baseEmail, other]);
+
+    expect(mockGroupBy).toHaveBeenCalledTimes(1);
+    expect(mockSenderFindMany).toHaveBeenCalledTimes(1);
   });
 });
