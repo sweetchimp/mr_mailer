@@ -8,6 +8,7 @@ CREATE TABLE `users` (
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `preferred_morning_time` VARCHAR(191) NOT NULL DEFAULT '07:00',
     `token_revoked_at` DATETIME(3) NULL,
+    `weekly_digest_email` BOOLEAN NOT NULL DEFAULT false,
 
     UNIQUE INDEX `users_email_key`(`email`),
     UNIQUE INDEX `users_google_id_key`(`google_id`),
@@ -38,17 +39,39 @@ CREATE TABLE `email_summaries` (
     `user_id` VARCHAR(191) NOT NULL,
     `gmail_message_id` VARCHAR(191) NOT NULL,
     `sender` VARCHAR(191) NOT NULL,
+    `sender_address` VARCHAR(191) NULL,
     `subject` VARCHAR(191) NOT NULL,
     `priority` ENUM('HIGH', 'MEDIUM', 'LOW') NOT NULL,
     `summary_text` TEXT NOT NULL,
     `suggested_reply` TEXT NULL,
     `status` ENUM('PENDING', 'SENT', 'DISMISSED', 'SNOOZED') NOT NULL DEFAULT 'PENDING',
     `snoozed_until` DATETIME(3) NULL,
+    `sent_at` DATETIME(3) NULL,
+    `dismissed_at` DATETIME(3) NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `email_summaries_gmail_message_id_key`(`gmail_message_id`),
     INDEX `email_summaries_user_id_idx`(`user_id`),
     INDEX `email_summaries_created_at_idx`(`created_at`),
+    INDEX `email_summaries_user_id_sent_at_idx`(`user_id`, `sent_at`),
+    INDEX `email_summaries_user_id_dismissed_at_idx`(`user_id`, `dismissed_at`),
+    INDEX `email_summaries_user_id_sender_address_idx`(`user_id`, `sender_address`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `sender_preferences` (
+    `id` VARCHAR(191) NOT NULL,
+    `user_id` VARCHAR(191) NOT NULL,
+    `sender_address` VARCHAR(191) NOT NULL,
+    `sender_name` VARCHAR(191) NULL,
+    `low_dismissals` INTEGER NOT NULL DEFAULT 0,
+    `suggestion_dismissed_at` DATETIME(3) NULL,
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL,
+
+    INDEX `sender_preferences_user_id_idx`(`user_id`),
+    UNIQUE INDEX `sender_preferences_user_id_sender_address_key`(`user_id`, `sender_address`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -157,6 +180,9 @@ ALTER TABLE `oauth_tokens` ADD CONSTRAINT `oauth_tokens_user_id_fkey` FOREIGN KE
 ALTER TABLE `email_summaries` ADD CONSTRAINT `email_summaries_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE `sender_preferences` ADD CONSTRAINT `sender_preferences_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE `job_failures` ADD CONSTRAINT `job_failures_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -173,4 +199,3 @@ ALTER TABLE `schedule_blocks` ADD CONSTRAINT `schedule_blocks_user_id_fkey` FORE
 
 -- AddForeignKey
 ALTER TABLE `reply_feedback` ADD CONSTRAINT `reply_feedback_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
-

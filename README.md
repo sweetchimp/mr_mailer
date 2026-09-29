@@ -49,12 +49,26 @@ Then fill in real values for every credential. See
 npx prisma db push
 ```
 
-> **Use `db push`, not `migrate deploy`.**
+> **Use `db push` for local development, `migrate deploy` for production.**
 > `prisma/migrations/20260924000000_init/migration.sql` is a squashed migration
-> containing `CREATE TABLE` for all nine models. It is correct for a *fresh*
-> database. If you are pointing at a database that was built by the 13 separate
-> migrations from before the Next.js migration, every statement will fail with
-> "table already exists" — use `db push` there, or recreate the database.
+> generated straight from the current `schema.prisma`, so `prisma migrate deploy`
+> against an *empty* database produces the complete current schema. Prefer it
+> anywhere you control the database — see [Deployment](#deployment).
+>
+> It is not safe against an already-populated database, for two reasons: a
+> database built by the 13 separate migrations from before the Next.js migration
+> replays every statement with "table already exists", and a database created by
+> `db push` has no applied-migration history at all — `migrate status` reports
+> every migration as pending, and `migrate deploy` tries to create all ten
+> tables from scratch. That is the case for the local development database. Use
+> `db push` there, or drop and recreate the database.
+>
+> Regenerate the squashed migration after a schema change with:
+>
+> ```bash
+> npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script \
+>   -o prisma/migrations/20260924000000_init/migration.sql
+> ```
 >
 > There is currently no local development seed data. The dashboard only ever
 > renders real mail.
@@ -103,6 +117,7 @@ lives in the worker).
 | `npm test` | Vitest, single run |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm run db:deploy` | `prisma migrate deploy` — applies `prisma/migrations` to `DATABASE_URL` |
 
 Because `next.config.ts` sets `output: "standalone"`, the deployable server
 bundle is built as a self-contained app. To smoke-test a production build
@@ -181,9 +196,10 @@ in sync with `src/components/theme-switcher.tsx`.
 
 These are known gaps, not bugs:
 
-- `/schedule` and `/minutes` do not exist. Early notes in this README claimed
-  `schedule.server.ts`, `minutes.server.ts`, and `meeting-reminder.server.ts`
-  were "present but unwired" — those files were never written.
+- `/schedule` does not exist. Early notes in this README claimed
+  `schedule.server.ts` and `meeting-reminder.server.ts` were "present but
+  unwired" — those files were never written. (`minutes.server.ts` has since been
+  written; `/minutes` is live.)
 - Two BullMQ queues are declared with **no consumer**: `meeting-reminder` and
   `schedule-block`. Snoozing does work end to end today: `snoozeAction` enqueues
   an `email-reminder` job and `src/worker.ts` consumes it, unsnoozing the email
@@ -193,6 +209,80 @@ These are known gaps, not bugs:
 
 ## Deployment
 
+Two processes make up a running deployment, and both are needed. `web` serves
+the UI and enqueues jobs; `worker` is the only thing that runs the digest cron,
+the weekly digest, the nightly cleanup, and the snooze unsnoozing. A deployment
+with only `web` looks healthy — sign-in works, the dashboard renders — but
+nothing is ever summarized and snoozes never expire, because "Refresh now"
+enqueues into a queue nobody drains.
+
+The build itself is hermetic: fonts are vendored in `src/app/fonts`, and the
+session-secret and Groq clients are constructed lazily, so `next build` in a
+fresh image never needs `.env` or network egress to build.
+
+### Pre-deploy checklist
+
+- [ ] `SESSION_SECRET` — `openssl rand -base64 48`. The app throws at boot in
+      production if it is missing, too short, or set to a known placeholder
+      (`change-me`, `secret`, …). It is dual-purpose: it signs session JWTs *and*
+      derives the AES key that stored OAuth tokens are encrypted with. **Never
+      rotate it casually** — doing so invalidates every stored token and forces
+      all users to re-authenticate.
+- [ ] OAuth redirect URIs registered with the providers, matching the env vars
+      exactly (a mismatch surfaces as `redirect_uri_mismatch`):
+      - `https://<your-domain>/auth/google/callback`
+      - `https://<your-domain>/auth/microsoft/callback`
+- [ ] `TZ=Europe/Budapest` on **both** services. Node defaults to UTC in the
+      image, which silently shifts the 07:00 digest and every meeting time by
+      hours — the worker pins `Intl…resolvedOptions().timeZone` into each cron
+      schedule (`src/worker.ts`), so the container has to match the app's home
+      timezone.
+- [ ] Schema applied to the production database: `npm run db:deploy`. See
+      "Applying the schema" below for why this is a manual step.
+- [ ] `GROQ_API_KEY` set, and `GROQ_MODEL` overridden if your key cannot reach
+      the default — Groq retires models without notice.
+
+### Railway
+
+`railway.json` points Railway at the Dockerfile and deliberately sets **no**
+`startCommand`, so the image's `CMD ["npm", "start"]` runs. An earlier version
+set `node server.js`, which does not exist at the image root — the standalone
+server is at `.next/standalone/server.js` — so the service would crash-loop on
+boot.
+
+Create four services:
+
+| Service | Source | Start command | Notes |
+|---|---|---|---|
+| `web` | this repo | *(none — Dockerfile `CMD`)* | The only service that should be publicly exposed |
+| `worker` | this repo | `npm run worker` | Set in the Railway dashboard, not in `railway.json`, because both services build the same Dockerfile and one repo-root config cannot give them different commands |
+| MySQL | Railway plugin | — | Wire `DATABASE_URL` by reference variable |
+| Redis | Railway plugin | — | Wire `REDIS_URL` by reference variable |
+
+The worker needs the same secrets as `web`: it decrypts stored OAuth tokens
+(`SESSION_SECRET`) and calls Groq. Set them at the project level, or on both
+services, rather than only on `web`.
+
+`healthcheckPath` is `/`, which is the landing page. It touches the database
+only when a session cookie is present, so it stays healthy without a working
+`DATABASE_URL` and reports unhealthy if the app itself fails to boot.
+
+#### Applying the schema
+
+```bash
+DATABASE_URL="mysql://user:pass@host:3306/mr_mailer" npm run db:deploy
+```
+
+Run this from a machine with dev dependencies, not from the deployed image: the
+runtime stage is `npm ci --omit=dev`, so the image has no `prisma` CLI at all.
+It is idempotent, so re-running it on every deploy is safe.
+
+The inline `DATABASE_URL` takes precedence over `.env` — Prisma's dotenv load
+does not overwrite variables already in the environment — so the command above
+targets the database you named even when a local `.env` points somewhere else.
+
+### Self-hosted (Docker Compose)
+
 ```bash
 docker compose up -d        # mysql, redis, web, worker
 ```
@@ -200,20 +290,14 @@ docker compose up -d        # mysql, redis, web, worker
 The `web` and `worker` compose services build the same image and read `env_file:
 .env` at run time (secrets are never baked into the image). `npm start` runs the
 Next standalone server at `.next/standalone/server.js`, and the worker entrypoint
-runs `npm run worker` (`tsx src/worker.ts`). Two settings are required for the
-containers, not for local dev:
+runs `npm run worker` (`tsx src/worker.ts`). Compose sets these two settings for
+you, which a non-compose deploy has to set itself:
 
 - `HOSTNAME=0.0.0.0` — without it the standalone server binds loopback *inside*
   the container and the published port maps to nothing, so the app appears to
   hang with no error in the logs.
-- `TZ=Europe/Budapest` — Node defaults to UTC in the image, which silently shifts
-  the digest cron (07:00) and the dashboard's meeting times by hours. The digest
-  scheduler, data-cleanup cron, and meeting-time rendering all derive from the
-  runtime zone, so the container must match the app's home timezone.
-
-The build itself is hermetic: fonts are vendored in `src/app/fonts`, and the
-session-secret and Groq clients are constructed lazily, so `next build` in a
-fresh image never needs `.env` or network egress to build.
+- `TZ=Europe/Budapest` — as above.
 
 > **Existing databases:** the squashed `20260924000000_init` migration will fail
-> against a database created by the pre-migration migrations. See step 4.
+> against a database created by the pre-migration migrations, or one created by
+> `db push` from an older `schema.prisma`. See step 4.

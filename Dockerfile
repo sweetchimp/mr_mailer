@@ -16,8 +16,15 @@ COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
 COPY prisma ./prisma
 COPY --from=build /app/.next/standalone ./.next/standalone
-COPY --from=build /app/.next/static ./.next/static
-COPY --from=build /app/public ./public
+# public/ and .next/static MUST land inside .next/standalone, next to server.js.
+# The standalone server resolves both against its own location, not against the
+# working directory, and does it once at boot — so with them at /app (the layout
+# the official Next Dockerfile produces, where server.js sits at the app root)
+# every asset 404s and the app serves unstyled HTML with no logo. Verified by
+# running this image: /_next/static/*.css and /logo.png both 404 until they are
+# copied here.
+COPY --from=build /app/.next/static ./.next/standalone/.next/static
+COPY --from=build /app/public ./.next/standalone/public
 # Worker entrypoint (runs with tsx, a runtime dep in this image)
 COPY src ./src
 COPY tsconfig.json ./tsconfig.json
