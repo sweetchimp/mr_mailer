@@ -1,5 +1,6 @@
 import { getMicrosoftAccessToken } from "../lib/microsoft-auth.server";
 import { currentDayWindow } from "../lib/date.server";
+import { stripHtml } from "../lib/utils.server";
 import type { EmailMessage, EmailProvider } from "./email-provider.server";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -25,21 +26,6 @@ function formatSender(emailAddress?: GraphEmailAddress): string {
   if (!address) return "";
   const name = emailAddress?.name?.trim();
   return name && name !== address ? `${name} <${address}>` : address;
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|tr|blockquote)>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 export class MicrosoftGraphProvider implements EmailProvider {

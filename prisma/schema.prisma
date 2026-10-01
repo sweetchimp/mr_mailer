@@ -25,6 +25,7 @@ model User {
   jobFailures          JobFailure[]
   oauthTokens          OAuthToken[]
   replyFeedback        ReplyFeedback[]
+  replyStyleProfile    ReplyStyleProfile?
   meetingReminders     MeetingReminder[]
   meetingMinutes       MeetingMinutes[]
   scheduleBlocks       ScheduleBlock[]
@@ -76,6 +77,16 @@ model EmailSummary {
   /// approximated by arrival date and misreports anything handled later than it
   /// arrived. Null on every row that has not been dismissed.
   dismissedAt    DateTime? @map("dismissed_at")
+  /// The original message text, as plain text.
+  ///
+  /// Kept because the digest pipeline already fetches the full body to
+  /// summarize it and then threw it away, so storing it is free — the network
+  /// call was already paid for. Without it "view the original" can only be a
+  /// second round trip to the provider, which is slow and impossible once the
+  /// token is revoked. Null on rows written before this column existed; those
+  /// backfill lazily on first view, and if that fetch fails they keep showing
+  /// the AI summary alone.
+  bodyText       String?   @db.LongText @map("body_text")
   createdAt      DateTime @default(now()) @map("created_at")
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -196,6 +207,17 @@ model ReplyFeedback {
   userId         String   @map("user_id")
   generatedReply String   @map("generated_reply") @db.Text
   finalReply     String   @map("final_reply") @db.Text
+  /// True when the user sent the AI's suggestion without changing it.
+  ///
+  /// Recorded rather than dropped, and this is the difference between learning
+  /// anything useful and learning the wrong thing. The only signal this table
+  /// used to keep was "what the user changed", so a model trained on it
+  /// converges on "be shorter, be blander" — it never sees that most replies
+  /// were fine as written, because that case was filtered out before it could
+  /// be counted. Accepted sends are the positive examples; rewrites say what to
+  /// change, but only in proportion to how much of what was suggested the user
+  /// actually kept.
+  accepted       Boolean  @default(false)
   insertions     Int      @default(0) @map("insertions")
   deletions      Int      @default(0) @map("deletions")
   modifications  Int      @default(0) @map("modifications")
@@ -204,7 +226,37 @@ model ReplyFeedback {
 
   @@index([userId])
   @@index([emailId])
+  /// The style analyser reads a user's most recent replies in one windowed
+  /// query; without the composite MySQL falls back to scanning every row this
+  /// user has ever sent and sorting in memory.
+  @@index([userId, createdAt])
   @@map("reply_feedback")
+}
+
+/// The writing-style profile the background analyser maintains, one row per
+/// user. Recomputed in full on every run rather than updated incrementally, so
+/// there is no cursor column to drift out of sync: the job reads the most recent
+/// N replies and writes the whole conclusion.
+model ReplyStyleProfile {
+  id         String   @id @default(uuid()) @map("id")
+  userId     String   @unique @map("user_id")
+  /// The model's description of how this user writes, fed back into the reply
+  /// prompt. Text rather than structured fields because the useful signal is
+  /// the model's own phrasing; constraining it to enums would throw away the
+  /// part worth reading.
+  styleNote  String   @db.LongText @map("style_note")
+  /// How many replies the note was derived from, and how those split between
+  /// accepted and rewritten. Shown to the user so a profile built from three
+  /// samples does not read as a considered judgement.
+  sampleCount    Int      @default(0) @map("sample_count")
+  acceptedCount  Int      @default(0) @map("accepted_count")
+  rewriteCount   Int      @default(0) @map("rewrite_count")
+  analyzedAt     DateTime @default(now()) @map("analyzed_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("reply_style_profiles")
 }
 
 enum Priority {

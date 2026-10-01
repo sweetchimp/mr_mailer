@@ -6,10 +6,14 @@ import { runDigestPipeline } from "./services/digest.server";
 import { sendWeeklyDigest } from "./services/weekly-digest.server";
 import { unsnoozeEmail } from "./services/reminder.server";
 import {
+  getMeetingReminderQueue,
   getMorningDigestQueue,
+  getReplyStyleQueue,
   getWeeklyDigestQueue,
 } from "./services/queue.server";
 import { cleanupOldRecords } from "./services/cleanup.server";
+import { analyzeReplyStyle } from "./services/reply-style.server";
+import { refreshTodaysMeetings } from "./services/meetings.server";
 import { TokenRevokedError } from "./lib/google-auth.server";
 
 const connection = getRedisConnection();
@@ -28,11 +32,30 @@ const SERVER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** Sunday 18:00 — see the scheduler registration for why this is not a setting. */
 const WEEKLY_DIGEST_CRON = "0 18 * * 0";
 
+/**
+ * Frequencies are chosen against the data they refresh, not convenience.
+ *
+ * The style note is rebuilt in full from the most recent replies on every run,
+ * so the only cost of running it more often is a model call; it wants to run
+ * often because a user who replies all morning should see the effect this
+ * afternoon. Meetings go stale the moment someone edits their calendar, so they
+ * want to run often for a different reason, and two hours is a compromise
+ * against Calendar's rate limits for a panel the user glances at on arrival.
+ *
+ * Both are on an odd minute and apart from each other on purpose: every other
+ * scheduler here fires on :00, and a job that lands on the same minute as the
+ * morning digest queues behind it instead of running alongside.
+ */
+const STYLE_REFRESH_CRON = "23 */2 * * *";
+const MEETINGS_REFRESH_CRON = "7 */2 * * *";
+
 const startTime = Date.now();
 let processedJobs = 0;
 let failedJobs = 0;
 let unsnoozedJobs = 0;
 let weeklyDigestsSent = 0;
+let styleAnalyses = 0;
+let meetingRefreshes = 0;
 
 function log(level: "info" | "error" | "warn", message: string) {
   const ts = new Date().toISOString();
@@ -248,6 +271,120 @@ weeklyWorker.on("failed", (job, err) => {
   log("error", `Weekly digest ${job?.id} failed: ${err.message}`);
 });
 
+/**
+ * Consumer for the `reply-style` queue.
+ *
+ * Runs unattended: the user never asks for their style profile, and the whole
+ * premise is that it keeps improving whether or not anyone opens a page. A
+ * separate queue from `morning-digest` because it has a different cadence and
+ * because a failed analysis must never be retried as part of a digest run.
+ */
+const styleWorker = new Worker(
+  "reply-style",
+  async (job) => {
+    const { userId } = job.data as { userId: string };
+
+    try {
+      const result = await analyzeReplyStyle(userId);
+
+      if (result.updated) {
+        styleAnalyses++;
+        log(
+          "info",
+          `Updated style profile for user ${userId} from ${result.sampleCount} replies`,
+        );
+      } else {
+        log(
+          "info",
+          `Skipped style profile for user ${userId}: ${result.reason}`,
+        );
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      log("error", `Style analysis failed for user ${userId}: ${errorMessage}`);
+      await recordFailure(
+        userId,
+        "reply-style",
+        "style-analysis",
+        errorMessage,
+        job.id,
+      );
+
+      throw error;
+    }
+  },
+  {
+    connection,
+    concurrency: 1,
+    limiter: { max: 10, duration: 60_000 },
+  },
+);
+
+styleWorker.on("completed", (job) => {
+  const userId = (job.data as { userId?: string } | undefined)?.userId;
+  log("info", `Style analysis ${job.id} completed for user ${userId}`);
+});
+
+styleWorker.on("failed", (job, err) => {
+  log("error", `Style analysis ${job?.id} failed: ${err.message}`);
+});
+
+/**
+ * Consumer for the `meeting-reminder` queue.
+ *
+ * This queue and the `MeetingReminder` table both already existed and neither
+ * was ever read or written by anything, so the dashboard called the Google
+ * Calendar API on every single render. That is the slow path this job exists to
+ * remove: the page now reads a table this job fills, and a slow or unreachable
+ * Calendar can no longer delay the dashboard.
+ */
+const meetingWorker = new Worker(
+  "meeting-reminder",
+  async (job) => {
+    const { userId } = job.data as { userId: string };
+
+    try {
+      const result = await refreshTodaysMeetings(userId);
+
+      meetingRefreshes++;
+      log(
+        "info",
+        `Refreshed meetings for user ${userId}: ${result.saved} saved, ${result.reason ?? "ok"}`,
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      log("error", `Meeting refresh failed for user ${userId}: ${errorMessage}`);
+      await recordFailure(
+        userId,
+        "meeting-reminder",
+        "calendar-refresh",
+        errorMessage,
+        job.id,
+      );
+
+      throw error;
+    }
+  },
+  {
+    connection,
+    concurrency: 1,
+    limiter: { max: 10, duration: 60_000 },
+  },
+);
+
+meetingWorker.on("completed", (job) => {
+  const userId = (job.data as { userId?: string } | undefined)?.userId;
+  log("info", `Meeting refresh ${job.id} completed for user ${userId}`);
+});
+
+meetingWorker.on("failed", (job, err) => {
+  log("error", `Meeting refresh ${job?.id} failed: ${err.message}`);
+});
+
 async function registerRepeatableJobs() {
   const users = await prisma.user.findMany({
     select: { id: true, preferredMorningTime: true },
@@ -255,6 +392,8 @@ async function registerRepeatableJobs() {
 
   const digestQueue = getMorningDigestQueue();
   const weeklyQueue = getWeeklyDigestQueue();
+  const styleQueue = getReplyStyleQueue();
+  const meetingQueue = getMeetingReminderQueue();
 
   for (const user of users) {
     const [hour, minute] = (user.preferredMorningTime ?? "07:00").split(":");
@@ -284,6 +423,24 @@ async function registerRepeatableJobs() {
         data: { userId: user.id },
       },
     );
+
+    await styleQueue.upsertJobScheduler(
+      `reply-style-${user.id}`,
+      { pattern: STYLE_REFRESH_CRON, tz: SERVER_TZ },
+      {
+        name: `style-${user.id}`,
+        data: { userId: user.id },
+      },
+    );
+
+    await meetingQueue.upsertJobScheduler(
+      `meeting-reminder-${user.id}`,
+      { pattern: MEETINGS_REFRESH_CRON, tz: SERVER_TZ },
+      {
+        name: `meetings-${user.id}`,
+        data: { userId: user.id },
+      },
+    );
   }
 
   await digestQueue.upsertJobScheduler(
@@ -309,6 +466,8 @@ async function gracefulShutdown(signal: string) {
     await worker.close();
     await reminderWorker.close();
     await weeklyWorker.close();
+    await styleWorker.close();
+    await meetingWorker.close();
     await connection.quit();
     log("info", "All connections closed");
   } catch (err) {
@@ -330,6 +489,6 @@ setInterval(() => {
   const uptime = Math.floor((Date.now() - startTime) / 1000);
   log(
     "info",
-    `Health: uptime=${uptime}s, processed=${processedJobs}, failed=${failedJobs}, unsnoozed=${unsnoozedJobs}, weeklySent=${weeklyDigestsSent}`,
+    `Health: uptime=${uptime}s, processed=${processedJobs}, failed=${failedJobs}, unsnoozed=${unsnoozedJobs}, weeklySent=${weeklyDigestsSent}, styles=${styleAnalyses}, meetings=${meetingRefreshes}`,
   );
 }, 300_000);

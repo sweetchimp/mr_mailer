@@ -11,6 +11,7 @@ import {
   describeSenderHistory,
   type SenderHistory,
 } from "../lib/sender-history";
+import { getReplyStyleNote } from "./reply-style.server";
 import type { Priority } from "@prisma/client";
 import type { EmailMessage } from "./email-provider.server";
 
@@ -45,11 +46,41 @@ If the email sits between two levels, choose the lower one rather than reading u
 
 When a sender history note is supplied, treat it as a prior, not a verdict: it records how this user classified this sender before. Use it to break ties and steady borderline calls, but if the content of the current email is clearly more or less urgent than the history suggests, follow the content.
 
+When a note about how this user writes is supplied, it describes their own previous replies. Apply it to suggestedReply ONLY. Never let it affect priority, summaryText, or actionRequired: a note about someone's tone is not evidence about how urgent an email is, and letting it leak into triage would mean a stylistic quirk could cause an email to be mis-prioritised. If the note conflicts with what the email clearly calls for, follow the email.
+
 Return ONLY valid JSON, no markdown fences.`;
+
+/**
+ * The user's learned writing style, read once per batch.
+ *
+ * Deliberately its own function rather than a third argument threaded through
+ * `summarizeEmail`: the note is a per-user property, so it would be the same
+ * string on every call in a digest run and re-reading it per email would be a
+ * query per message for one row.
+ *
+ * A failure here must not fail the digest. Style is an improvement to the
+ * drafted reply, not a precondition for triaging the inbox, so this swallows its
+ * own errors and returns null, which the caller omits from the prompt entirely.
+ */
+async function loadStyleNote(
+  userId: string,
+): Promise<string | null> {
+  try {
+    return await getReplyStyleNote(userId);
+  } catch (error) {
+    console.warn(
+      `[ai] style note unavailable for user ${userId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+}
 
 async function summarizeEmail(
   email: EmailMessage,
   senderNote: string | null,
+  styleNote: string | null,
 ): Promise<EmailSummaryResult | null> {
   const rawBody = email.body || email.snippet;
   const stripped = stripQuotedReplies(rawBody);
@@ -61,6 +92,10 @@ async function summarizeEmail(
   // Omitted entirely when there is no history: telling the model "no history"
   // is noise that invites it to invent a reason for a classification.
   if (senderNote) header.push(senderNote);
+  // Also omitted when absent, for the same reason. Present only when a
+  // background analysis has actually built a profile, and placed last so it
+  // reads as the most specific input rather than a fact about the email.
+  if (styleNote) header.push(`How this user writes: ${styleNote}`);
 
   const model = getGroqModel();
   const response = await getGroq().chat.completions.create({
@@ -135,10 +170,13 @@ export async function summarizeEmails(
   const existingIds = new Set(existingSummaries.map((s) => s.gmailMessageId));
 
   // Only genuinely new mail needs a prior; cached rows never reach the model.
-  const senderHistory = await loadSenderHistory(
-    userId,
-    emails.filter((email) => !existingIds.has(email.id)),
-  );
+  const [senderHistory, styleNote] = await Promise.all([
+    loadSenderHistory(
+      userId,
+      emails.filter((email) => !existingIds.has(email.id)),
+    ),
+    loadStyleNote(userId),
+  ]);
 
   // Every outcome is counted. Previously a provider outage looked identical to
   // an empty inbox: each email was swallowed into `summary: null`, nothing was
@@ -178,6 +216,7 @@ export async function summarizeEmails(
         const result = await summarizeEmail(
           email,
           history ? describeSenderHistory(history) : null,
+          styleNote,
         );
         if (!result) {
           failed++;
@@ -200,12 +239,24 @@ export async function summarizeEmails(
             priority: result.priority as Priority,
             summaryText: result.summaryText,
             suggestedReply: result.suggestedReply,
+            // The digest pipeline already fetched the full body in order to
+            // summarize it and then dropped it, so storing it costs nothing.
+            // `getFullBody` returns plain text, never markup: the Gmail
+            // provider strips HTML when a message has no text/plain part, and
+            // Graph strips it too. That matters because this column is later
+            // rendered to the user.
+            bodyText: email.body ?? null,
           },
           update: {
             senderAddress: extractSenderAddress(email.sender),
             priority: result.priority as Priority,
             summaryText: result.summaryText,
             suggestedReply: result.suggestedReply,
+            // Only fill it in, never clear it. An update is a re-digest, and the
+            // original body does not change between two passes over the same
+            // message — so a null body from a cached re-run must not overwrite
+            // text a previous pass already stored.
+            ...(email.body ? { bodyText: email.body } : {}),
           },
         });
 

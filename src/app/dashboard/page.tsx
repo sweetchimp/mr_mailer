@@ -6,7 +6,7 @@ import {
   getProviderForUser,
   getTodaysHandledCounts,
 } from "@/services/dashboard.server";
-import { getTodaysEvents } from "@/services/calendar.server";
+import { getCachedTodaysMeetings } from "@/services/meetings.server";
 import { formatLocalTime } from "@/lib/date.server";
 import { StatTile } from "@/components/stat-tile";
 import { DiveTile } from "@/components/dive-tile";
@@ -15,32 +15,34 @@ import { ProgressRing } from "@/components/progress-ring";
 export default async function DashboardIndex() {
   const user = await requireUser();
 
-  const [counts, provider, aiFailure, handled, avgReply] = await Promise.all([
-    getDashboardCounts(user.id),
-    getProviderForUser(user.id),
-    getLatestSummarizationFailure(user.id),
-    getTodaysHandledCounts(user.id),
-    getAverageReplyTime(user.id),
-  ]);
-
   const tokenRevoked = !!user.tokenRevokedAt;
 
-  let meetings: { eventId: string; title: string; startTime: Date }[] = [];
-  if (!tokenRevoked) {
-    try {
-      meetings = await getTodaysEvents(user.id);
-    } catch (error) {
-      // Calendar is a nice-to-have: a revoked or unscoped token should not
-      // take the whole dashboard down. But swallowing the reason silently
-      // makes an empty meetings panel indistinguishable from "no meetings",
-      // so keep the cause in the log.
-      console.warn(
-        `[dashboard] meetings panel unavailable for user ${user.id}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
+  // Meetings come from the `MeetingReminder` table, not from Calendar. The
+  // worker refreshes it on a schedule and on sign-in, so this is one indexed
+  // query instead of a live API call in the render path — the difference between
+  // a dashboard that renders as fast as its own queries and one that waits on
+  // Google. A revoked token skips it: the rows would be months old, and showing
+  // yesterday's meetings as "today's" is worse than showing none.
+  const [counts, provider, aiFailure, handled, avgReply, meetings] =
+    await Promise.all([
+      getDashboardCounts(user.id),
+      getProviderForUser(user.id),
+      getLatestSummarizationFailure(user.id),
+      getTodaysHandledCounts(user.id),
+      getAverageReplyTime(user.id),
+      tokenRevoked
+        ? Promise.resolve([])
+        : getCachedTodaysMeetings(user.id).catch((error) => {
+            // Logged rather than swallowed silently, so an empty panel can be
+            // told apart from "no meetings".
+            console.warn(
+              `[dashboard] meetings panel unavailable for user ${user.id}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+            return [];
+          }),
+    ]);
 
   const total =
     counts.high + counts.medium + counts.low + counts.replied + counts.snoozed;

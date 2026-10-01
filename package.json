@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:deploy": "prisma migrate deploy",
+    "assets:brand": "node scripts/generate-brand-assets.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {

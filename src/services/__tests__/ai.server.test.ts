@@ -7,6 +7,7 @@ const {
   mockUpsert,
   mockGroupBy,
   mockSenderFindMany,
+  mockStyleProfileFindUnique,
 } = vi.hoisted(() => ({
   mockGroqCreate: vi.fn(),
   mockFindMany: vi.fn().mockResolvedValue([]),
@@ -14,6 +15,11 @@ const {
   mockUpsert: vi.fn(),
   mockGroupBy: vi.fn().mockResolvedValue([]),
   mockSenderFindMany: vi.fn().mockResolvedValue([]),
+  // Null is the default for a user with no learned profile yet. It has to be
+  // declared at all: without the model here, reading it threw and the style
+  // lookup failed open with a log line, which the assertions below would never
+  // have seen — a test that passes while testing nothing.
+  mockStyleProfileFindUnique: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("groq-sdk", () => {
@@ -35,6 +41,9 @@ vi.mock("../../lib/prisma.server", () => ({
       },
       senderPreference: {
         findMany: mockSenderFindMany,
+      },
+      replyStyleProfile: {
+        findUnique: mockStyleProfileFindUnique,
       },
     };
   },
@@ -123,6 +132,7 @@ describe("summarizeEmails (AI summary parsing)", () => {
     mockFindUnique.mockResolvedValue(null);
     mockGroupBy.mockResolvedValue([]);
     mockSenderFindMany.mockResolvedValue([]);
+    mockStyleProfileFindUnique.mockResolvedValue(null);
     // The Groq client is built on first use rather than at import time, so the
     // key has to be present when a test actually calls the API — which is what
     // makes the missing-key path below a real assertion rather than an
@@ -276,5 +286,48 @@ describe("summarizeEmails (AI summary parsing)", () => {
 
     expect(mockGroupBy).toHaveBeenCalledTimes(1);
     expect(mockSenderFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the model the style this user writes in", async () => {
+    mockGroqCreate.mockResolvedValue(goodResponse);
+    mockStyleProfileFindUnique.mockResolvedValue({
+      styleNote: "Short sentences, no greeting, signs off as - J",
+    });
+
+    await summarizeEmails("user-1", [baseEmail]);
+
+    expect(userContent()).toContain("Short sentences, no greeting");
+  });
+
+  it("leaves the style note out for a user who has no profile yet", async () => {
+    mockGroqCreate.mockResolvedValue(goodResponse);
+    mockStyleProfileFindUnique.mockResolvedValue(null);
+
+    await summarizeEmails("user-1", [baseEmail]);
+
+    expect(userContent()).not.toContain("style");
+    expect(userContent()).toContain(`From: ${baseEmail.sender}`);
+  });
+
+  it("reads the style profile once for the whole batch", async () => {
+    mockGroqCreate.mockResolvedValue(goodResponse);
+    mockStyleProfileFindUnique.mockResolvedValue({ styleNote: "Terse and blunt." });
+    const other: EmailMessage = { ...baseEmail, id: "msg-2" };
+
+    await summarizeEmails("user-1", [baseEmail, other]);
+
+    expect(mockStyleProfileFindUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("still summarises when the style profile lookup fails", async () => {
+    mockGroqCreate.mockResolvedValue(goodResponse);
+    mockStyleProfileFindUnique.mockRejectedValue(new Error("db gone"));
+
+    const results = await summarizeEmails("user-1", [baseEmail]);
+
+    // The note is an enhancement. A database blip on the profile row must not
+    // cost the user their whole inbox summary.
+    expect(results[0].summary?.summaryText).toBe("Alice wants to schedule a meeting at 3pm.");
+    expect(userContent()).not.toContain("style");
   });
 });

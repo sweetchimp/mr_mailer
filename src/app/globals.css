@@ -73,6 +73,14 @@
 
   /* Signature brand gradient — use sparingly */
   --color-brand-gradient: linear-gradient(135deg, #1F3A5F 0%, #3B5D8C 60%, #C08A2E 100%);
+
+  /* The plate the logo sits on.
+     The generated logo assets (see scripts/generate-brand-assets.mjs) are ~67%
+     dark navy on transparency, so on any dark surface the mark disappears into
+     it. Setting a light plate in the dark blocks below keeps the artwork
+     untouched and legible everywhere. Transparent in light, where the navy
+     already reads on white. */
+  --logo-tile-bg: transparent;
 }
 
 /* Dark theme tokens — a navy-tinted derivation of the light palette above.
@@ -114,6 +122,8 @@
   --color-masthead-1: #16283F;
   --color-masthead-2: #1F3A5F;
   --color-masthead-3: #8A6420;
+
+  --logo-tile-bg: #F4F6F9;
 }
 
 /* System dark (unless user forced light) */
@@ -154,12 +164,28 @@
     --color-masthead-1: #16283F;
     --color-masthead-2: #1F3A5F;
     --color-masthead-3: #8A6420;
+
+    --logo-tile-bg: #F4F6F9;
   }
 }
 
 /* Light override wins over system */
 :root[data-theme="light"] {
   color-scheme: light;
+}
+
+/* The watermark mascot is dark navy, which at 5% opacity is invisible against a
+   dark surface. Inverting it turns the artwork near-white for the dark theme
+   only, so the same element reads on both. Scoped to the element rather than
+   applied inline so the media fallback below can share one declaration. */
+:root[data-theme="dark"] .watermark-art {
+  filter: invert(1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .watermark-art {
+    filter: invert(1);
+  }
 }
 
 html,

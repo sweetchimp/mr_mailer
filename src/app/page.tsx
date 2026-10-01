@@ -1,7 +1,7 @@
-import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
+import { MrMailerLogo } from "@/components/mr-mailer-logo";
 import { getSessionCookieName, verifySession } from "@/lib/session.server";
 
 export default async function Landing() {
@@ -23,6 +23,13 @@ export default async function Landing() {
         overflow: "hidden",
         padding: "32px 20px",
         gap: "40px",
+        // Set locally so the logo gets its light plate in both themes. This page
+        // is a fixed navy gradient and never reads the theme tokens, so without
+        // this the mark's navy artwork would sit on navy and all that would
+        // survive is the gold. A local declaration beats the `:root` default.
+        // Cast the key the way email-card.tsx does: React's CSSProperties has no
+        // index signature for custom properties.
+        ["--logo-tile-bg" as string]: "#FFFFFF",
       }}
     >
       <div
@@ -45,21 +52,25 @@ export default async function Landing() {
           textAlign: "center",
         }}
       >
-        <Image
-          src="/logo.png"
-          alt="Mr Mailer logo"
-          width={640}
-          height={640}
-          priority
+        <div
           style={{
-            width: "clamp(200px, 55vw, 640px)",
-            height: "clamp(200px, 55vw, 640px)",
-            objectFit: "contain",
-            display: "block",
-            borderRadius: "clamp(20px, 4vw, 48px)",
-            boxShadow: "0 24px 64px rgba(10, 20, 35, 0.45)",
+            // Bounded against viewport *height* as well as width, which is the
+            // part that is easy to miss. Sizing on width alone is fine on a tall
+            // window and overflows on a short one: the lockup is 0.69 as tall as
+            // it is wide, so at 520px it takes 359px, and with the button, the
+            // 40px gaps and the page padding that leaves under 200px of slack.
+            // Capping at 58vh keeps the whole stack on screen on a laptop in a
+            // short window, and the vw term stops it becoming a thumbnail on a
+            // phone.
+            width: "min(92vw, 520px, 58vh)",
+            // The lockup draws its own plate and radius, so the shadow is a
+            // drop-shadow filter rather than a box shadow: a box shadow would
+            // trace the wrapper's rectangle and square off the rounded plate.
+            filter: "drop-shadow(0 20px 44px rgba(6, 14, 28, 0.45))",
           }}
-        />
+        >
+          <MrMailerLogo size="100%" priority />
+        </div>
       </div>
 
       <Link

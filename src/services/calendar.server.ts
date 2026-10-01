@@ -8,6 +8,9 @@ const CALENDAR_API =
   "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 const MAX_EVENTS = 50;
 
+/** How long a single Calendar request may take before it is abandoned. */
+const CALENDAR_TIMEOUT_MS = 2_000;
+
 export interface CalendarEvent {
   eventId: string;
   title: string;
@@ -96,6 +99,20 @@ export async function loadTodaysEvents(userId: string): Promise<CalendarEvent[]>
 
   const res = await fetch(`${CALENDAR_API}?${params.toString()}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    // A deadline, not a suggestion. This call is now made by the worker rather
+    // than by a page render, but a hung request would still occupy a worker
+    // slot indefinitely — and `fetch` has no default timeout, so a TCP
+    // connection that never completes blocks forever. Two seconds is generous
+    // for a single events query; anything slower is not worth waiting for.
+    signal: AbortSignal.timeout(CALENDAR_TIMEOUT_MS),
+  }).catch((cause) => {
+    // Distinguish "we gave up" from "Calendar said no". A timeout here means
+    // the refresh is incomplete, and the caller decides what to do about a
+    // partial answer.
+    if (cause instanceof DOMException && cause.name === "TimeoutError") {
+      console.warn(`[calendar] request for user ${userId} timed out`);
+    }
+    throw cause;
   });
 
   if (res.status === 403) {

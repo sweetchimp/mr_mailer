@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { prisma } from "../lib/prisma.server";
 import type { EmailSummary, Prisma, Priority, Provider } from "@prisma/client";
 import type {
@@ -18,7 +19,7 @@ export interface DashboardCounts {
   history: number;
 }
 
-export async function getDashboardCounts(userId: string): Promise<DashboardCounts> {
+async function loadDashboardCounts(userId: string): Promise<DashboardCounts> {
   const [high, medium, low, replied, snoozed, history] = await Promise.all([
     prisma.emailSummary.count({
       where: { userId, status: "PENDING", priority: "HIGH" },
@@ -39,7 +40,17 @@ export async function getDashboardCounts(userId: string): Promise<DashboardCount
   return { high, medium, low, replied, snoozed, history };
 }
 
-export async function getProviderForUser(userId: string): Promise<Provider> {
+/**
+ * Request-memoized, because the dashboard asks for these counts from more than
+ * one place in a single render and each call was six separate `count` queries.
+ *
+ * `cache` is per-request, not per-process: a count that a background job changes
+ * must not be pinned for the lifetime of the server, and it is a pass-through
+ * outside a render, so worker and action callers are unaffected.
+ */
+export const getDashboardCounts = cache(loadDashboardCounts);
+
+async function loadProviderForUser(userId: string): Promise<Provider> {
   const token = await prisma.oAuthToken.findFirst({
     where: { userId },
     orderBy: { createdAt: "desc" },
@@ -47,6 +58,13 @@ export async function getProviderForUser(userId: string): Promise<Provider> {
   });
   return token?.provider ?? "GOOGLE";
 }
+
+/**
+ * Request-memoized for the same reason as `getDashboardCounts`: every bucket
+ * page resolves the provider to decide whether to mention calendar sync, so a
+ * layout, a page, and the ticker were each re-reading the token row.
+ */
+export const getProviderForUser = cache(loadProviderForUser);
 
 /**
  * How recent an AI-summarization failure must be to be worth reporting.

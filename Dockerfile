@@ -21,8 +21,8 @@ COPY --from=build /app/.next/standalone ./.next/standalone
 # working directory, and does it once at boot — so with them at /app (the layout
 # the official Next Dockerfile produces, where server.js sits at the app root)
 # every asset 404s and the app serves unstyled HTML with no logo. Verified by
-# running this image: /_next/static/*.css and /logo.png both 404 until they are
-# copied here.
+# running this image: /_next/static/*.css and /logo-lockup.png both 404 until
+# they are copied here.
 COPY --from=build /app/.next/static ./.next/standalone/.next/static
 COPY --from=build /app/public ./.next/standalone/public
 # Worker entrypoint (runs with tsx, a runtime dep in this image)

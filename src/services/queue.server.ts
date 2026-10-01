@@ -6,7 +6,8 @@ type QueueName =
   | "weekly-digest"
   | "email-reminder"
   | "meeting-reminder"
-  | "schedule-block";
+  | "schedule-block"
+  | "reply-style";
 
 const REMOVE_ON_COMPLETE: Record<QueueName, number> = {
   "morning-digest": 50,
@@ -14,6 +15,7 @@ const REMOVE_ON_COMPLETE: Record<QueueName, number> = {
   "email-reminder": 20,
   "meeting-reminder": 50,
   "schedule-block": 50,
+  "reply-style": 20,
 };
 
 let cache: Map<QueueName, Queue> | null = null;
@@ -64,4 +66,8 @@ export function getMeetingReminderQueue(): Queue {
 /** Not yet consumed — reserved for the schedule-block worker job. */
 export function getScheduleBlockQueue(): Queue {
   return queue("schedule-block");
+}
+
+export function getReplyStyleQueue(): Queue {
+  return queue("reply-style");
 }

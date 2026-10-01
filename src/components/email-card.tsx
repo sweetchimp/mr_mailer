@@ -8,6 +8,7 @@ import {
   snoozeAction,
 } from "@/app/dashboard/actions";
 import type { SummarizedEmail } from "@/lib/email-view";
+import { OriginalEmail } from "@/components/original-email";
 
 const TONES = {
   HIGH: {
@@ -337,12 +338,23 @@ export function EmailCard({
           )}
 
           {!expanded && suggestedReply && (
-            <p
+            // A real button rather than styled text. This used to be a bare
+            // <p> with no handler of its own: it looked like a link, but the
+            // only thing that responded was the card wrapper's onClick, so
+            // "View & Reply" did exactly one thing — expand the card to the
+            // reply box — and showed no email at all. Now the label does what
+            // it says, and is reachable by keyboard.
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpanded(true);
+              }}
               className="mt-2 text-xs font-medium"
               style={{ fontFamily: "var(--font-body)", color: "var(--color-brand-blue)" }}
             >
-              View &amp; Reply &rarr;
-            </p>
+              View &amp; reply &rarr;
+            </button>
           )}
         </div>
 
@@ -365,6 +377,8 @@ export function EmailCard({
           style={{ borderTop: "1px solid var(--color-line)", paddingTop: "16px" }}
           onClick={(event) => event.stopPropagation()}
         >
+          <OriginalEmail emailId={email.id} snippet={email.snippet} />
+
           {suggestedReply && (
             <div className="mb-3">
               <p

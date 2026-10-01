@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
+import { prisma } from "@/lib/prisma.server";
 import { getSessionCookieName, verifySession } from "@/lib/session.server";
 import { ProviderButton } from "@/components/provider-button";
 import { MrMailerLogo } from "@/components/mr-mailer-logo";
@@ -59,7 +60,18 @@ export default async function Login({ searchParams }: LoginPageProps) {
     return token ? verifySession(token) : null;
   })();
 
-  if (session?.userId) redirect("/dashboard");
+  // Check the user row, not just the token. `requireUser` redirects here when
+  // the session names an account that no longer exists, so a valid-but-orphaned
+  // JWT made this page bounce straight back to /dashboard, which bounced
+  // straight back here — a redirect loop that surfaced as Next's "Redirect loop
+  // detected" page rather than a usable sign-in. Mirrors `getCurrentUser`.
+  if (session?.userId) {
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { id: true },
+    });
+    if (user) redirect("/dashboard");
+  }
 
   const errorMessage = describeError(error);
 
@@ -90,14 +102,15 @@ export default async function Login({ searchParams }: LoginPageProps) {
           position: "relative",
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
+          // Was space-between for the logo/date pair. With the logo gone there is
+          // one child, and space-between would pull the date to the left edge.
+          justifyContent: "flex-end",
           gap: "12px",
           padding: "18px 24px",
           background: "var(--color-surface)",
           borderBottom: "1px solid var(--color-line)",
         }}
       >
-        <MrMailerLogo size={34} />
         <span
           style={{
             fontSize: "12px",
@@ -125,8 +138,13 @@ export default async function Login({ searchParams }: LoginPageProps) {
           textAlign: "center",
         }}
       >
+        <div style={{ width: "min(86vw, 300px)" }}>
+          <MrMailerLogo size="100%" priority />
+        </div>
+
         <span
           style={{
+            marginTop: "28px",
             fontFamily: "var(--font-mono)",
             fontSize: "11px",
             letterSpacing: "0.22em",

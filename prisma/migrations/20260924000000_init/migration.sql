@@ -48,6 +48,7 @@ CREATE TABLE `email_summaries` (
     `snoozed_until` DATETIME(3) NULL,
     `sent_at` DATETIME(3) NULL,
     `dismissed_at` DATETIME(3) NULL,
+    `body_text` LONGTEXT NULL,
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `email_summaries_gmail_message_id_key`(`gmail_message_id`),
@@ -163,6 +164,7 @@ CREATE TABLE `reply_feedback` (
     `user_id` VARCHAR(191) NOT NULL,
     `generated_reply` TEXT NOT NULL,
     `final_reply` TEXT NOT NULL,
+    `accepted` BOOLEAN NOT NULL DEFAULT false,
     `insertions` INTEGER NOT NULL DEFAULT 0,
     `deletions` INTEGER NOT NULL DEFAULT 0,
     `modifications` INTEGER NOT NULL DEFAULT 0,
@@ -170,6 +172,23 @@ CREATE TABLE `reply_feedback` (
 
     INDEX `reply_feedback_user_id_idx`(`user_id`),
     INDEX `reply_feedback_email_id_idx`(`email_id`),
+    INDEX `reply_feedback_user_id_created_at_idx`(`user_id`, `created_at`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `reply_style_profiles` (
+    `id` VARCHAR(191) NOT NULL,
+    `user_id` VARCHAR(191) NOT NULL,
+    `style_note` LONGTEXT NOT NULL,
+    `sample_count` INTEGER NOT NULL DEFAULT 0,
+    `accepted_count` INTEGER NOT NULL DEFAULT 0,
+    `rewrite_count` INTEGER NOT NULL DEFAULT 0,
+    `analyzed_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `reply_style_profiles_user_id_key`(`user_id`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -199,3 +218,6 @@ ALTER TABLE `schedule_blocks` ADD CONSTRAINT `schedule_blocks_user_id_fkey` FORE
 
 -- AddForeignKey
 ALTER TABLE `reply_feedback` ADD CONSTRAINT `reply_feedback_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `reply_style_profiles` ADD CONSTRAINT `reply_style_profiles_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

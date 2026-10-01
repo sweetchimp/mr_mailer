@@ -8,8 +8,29 @@ const IV_LENGTH = 12;
 // undecryptable, so it stays until the encryption scheme is versioned.
 const SALT = "remix-auth-oauth2-salt";
 
+/**
+ * The derived key, computed once per process.
+ *
+ * `scryptSync` is deliberately slow — that is the entire reason scrypt is used
+ * here — and it was being run on every single `encrypt` and `decrypt` call.
+ * `decrypt` is on the OAuth-token read path, so a dashboard render paid for a
+ * full scrypt derivation each time it touched a stored token, blocking the
+ * event loop while it did.
+ *
+ * Cached on the secret itself rather than in a bare variable so that a changed
+ * `SESSION_SECRET` — in tests, or after a rotation — re-derives instead of
+ * silently continuing to encrypt under the old key.
+ */
+let cachedSecret: string | null = null;
+let cachedKey: Buffer | null = null;
+
 function deriveKey(secret: string): Buffer {
-  return crypto.scryptSync(secret, SALT, 32);
+  if (cachedKey && cachedSecret === secret) return cachedKey;
+
+  const key = crypto.scryptSync(secret, SALT, 32);
+  cachedSecret = secret;
+  cachedKey = key;
+  return key;
 }
 
 export function encrypt(plaintext: string): string {

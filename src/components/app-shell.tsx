@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/current-session.server";
 import { getDashboardCounts, getProviderForUser } from "@/services/dashboard.server";
-import { MrMailerLogo } from "@/components/mr-mailer-logo";
+import { MrMailerMark } from "@/components/mr-mailer-logo";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { VerseModal } from "@/components/verse-modal";
 import { Watermark } from "@/components/watermark";
@@ -14,12 +14,12 @@ import { RefreshButton } from "@/components/refresh-button";
  * Shared by `/dashboard`, `/minutes`, `/insights` and `/weekly-summary` so the
  * four areas cannot drift apart. `ticker` is a slot rather than fetched here:
  * only the dashboard wants the activity bar, and sourcing it here would spend
- * a Calendar API call on the other three routes for a bar they do not show.
+ * three ticker queries on the other three routes for a bar they do not show.
  *
- * Note it still calls `requireUser()` and the counts itself rather than
- * receiving them as props. Every page under it calls `requireUser()` as well,
- * so this is the same duplicate session read the dashboard has always had —
- * layout and page render in one pass and neither result is shared.
+ * It calls `requireUser()` and the counts itself rather than receiving them as
+ * props, and every page below calls `requireUser()` too — but both are
+ * request-memoized now, so the layout and the page share one session read and
+ * one counts result instead of repeating them.
  */
 export async function AppShell({
   children,
@@ -60,7 +60,20 @@ export async function AppShell({
       >
         <div className="mx-auto max-w-3xl px-6 py-5">
           <div className="flex items-center justify-between gap-4">
-            <MrMailerLogo size={38} />
+            <div className="flex items-center gap-3">
+              <MrMailerMark size={40} />
+              <span
+                style={{
+                  fontFamily: "var(--font-display)",
+                  fontWeight: 600,
+                  fontSize: "19px",
+                  letterSpacing: "-0.01em",
+                  color: "var(--color-ink)",
+                }}
+              >
+                Mr Mailer
+              </span>
+            </div>
             <span
               className="text-[11px]"
               style={{
@@ -163,13 +176,6 @@ export async function AppShell({
               style={{ fontFamily: "var(--font-mono)" }}
             >
               Meeting Minutes
-            </Link>
-            <Link
-              href="/insights"
-              className="btn btn-outline px-3 py-2 text-[12px]"
-              style={{ fontFamily: "var(--font-mono)" }}
-            >
-              Reply insights
             </Link>
             <Link
               href="/weekly-summary"

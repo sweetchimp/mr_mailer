@@ -138,6 +138,55 @@ export async function sendReplyAction(
   }
 }
 
+/**
+ * The original message behind a summary, for "view the original".
+ *
+ * Prefers the body stored at ingest and falls back to the provider only when
+ * the row predates the `bodyText` column, writing the result back so the second
+ * view is instant. A failed backfill is not cached: an empty string is a real
+ * answer for some messages (a mail with no text part), and storing one on a
+ * transient provider error would make a temporary failure permanent.
+ *
+ * Returns a discriminated shape rather than a bare string because the client
+ * needs to tell three cases apart: a body, a genuinely body-less message, and a
+ * provider that could not be reached. Collapsing the last two would show "no
+ * original available" for what is really "try again later".
+ */
+export type EmailBodyResult =
+  | { ok: true; body: string }
+  | { ok: true; body: null }
+  | { ok: false; error: string };
+
+export async function getEmailBodyAction(
+  emailId: string,
+): Promise<EmailBodyResult> {
+  const user = await requireUser();
+
+  const summary = await findOwnedSummary(user.id, emailId);
+  if (!summary) return { ok: false, error: "Email not found." };
+
+  if (summary.bodyText !== null) {
+    return { ok: true, body: summary.bodyText };
+  }
+
+  try {
+    const provider = await getEmailProvider(user.id);
+    const body = await provider.getFullBody(user.id, summary.gmailMessageId);
+
+    if (body.length === 0) return { ok: true, body: null };
+
+    await prisma.emailSummary.update({
+      where: { id: summary.id },
+      data: { bodyText: body },
+    });
+
+    return { ok: true, body };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
+  }
+}
+
 export async function dismissAction(emailId: string): Promise<ActionResult> {
   const user = await requireUser();
 
