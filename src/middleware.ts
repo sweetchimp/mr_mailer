@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/session-cookie";
+import { appUrl } from "@/lib/env.server";
 import {
   getSessionCookieName,
   refreshSessionToken,
@@ -22,16 +23,17 @@ import {
 export async function middleware(request: NextRequest) {
   const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
 
+  // Built from APP_BASE_URL, never from request.url: behind Railway the latter
+  // is the container's bind address (0.0.0.0:8080), so a request-derived
+  // redirect sends the browser somewhere unroutable. See appUrl().
   if (!token?.startsWith("eyJ")) {
-    const loginUrl = new URL("/login", request.url);
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.redirect(appUrl("/login"));
   }
 
   const session = await verifySession(token);
 
   if (!session) {
-    const loginUrl = new URL("/login", request.url);
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.redirect(appUrl("/login"));
   }
 
   const refreshed = await refreshSessionToken(session);

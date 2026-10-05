@@ -110,3 +110,22 @@ export function getAppBaseUrl(): string {
   // into the callback URL and produce a value the provider has never seen.
   return parsed.origin;
 }
+
+/**
+ * Builds an absolute in-app URL from the configured origin.
+ *
+ * The second argument to `new URL()` is the trap this exists to close. Passing
+ * `request.url` resolves against whatever origin the request arrived with, and
+ * behind a proxy that is not the public one: Next's standalone server seeds
+ * __NEXT_PRIVATE_ORIGIN from its bind address (see start-server.js), so a
+ * container started with HOSTNAME=0.0.0.0 on PORT=8080 believes its origin is
+ * http://0.0.0.0:8080 and hands that to every request.url. A redirect built
+ * that way is a well-formed URL to an unroutable address, which is why a
+ * successful login could end at ERR_ADDRESS_INVALID rather than at a page.
+ *
+ * Returns a URL rather than a string so callers can keep setting search params
+ * on it, which is how the OAuth callbacks attach ?error=... to /login.
+ */
+export function appUrl(path: string): URL {
+  return new URL(path, getAppBaseUrl());
+}

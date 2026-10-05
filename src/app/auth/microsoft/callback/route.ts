@@ -6,6 +6,7 @@ import {
 } from "@/lib/oauth.server";
 import { sessionCookie, signSession } from "@/lib/session.server";
 import { runPostLogin } from "@/lib/auth-callback.server";
+import { appUrl } from "@/lib/env.server";
 
 const PROVIDER = "MICROSOFT";
 
@@ -18,7 +19,11 @@ export async function GET(request: NextRequest) {
   const providerError = searchParams.get("error");
   const providerErrorDescription = searchParams.get("error_description");
 
-  const loginUrl = new URL("/login", request.url);
+  // appUrl() rather than new URL("/login", request.url): request.url carries the
+  // container's bind address behind Railway, which sent a successful login to
+  // an unroutable origin. Every Location below is a full URL, so all of them
+  // have to come from the configured origin.
+  const loginUrl = appUrl("/login");
   const oauthState = decodeStateCookie(request.headers.get("Cookie"));
 
   if (
@@ -57,7 +62,7 @@ export async function GET(request: NextRequest) {
 
     runPostLogin(user);
 
-    const res = NextResponse.redirect(new URL("/dashboard", request.url));
+    const res = NextResponse.redirect(appUrl("/dashboard"));
     res.headers.append("Set-Cookie", sessionCookie(token));
     res.headers.append("Set-Cookie", clearStateCookie());
     return res;

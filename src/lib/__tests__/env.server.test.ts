@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getAppBaseUrl } from "../env.server";
+import { appUrl, getAppBaseUrl } from "../env.server";
 
 /**
  * Every assertion here is about one guarantee: a value that reaches a provider
@@ -138,5 +138,86 @@ describe("getAppBaseUrl", () => {
       setEnv("development");
       expect(getAppBaseUrl()).toBe("http://localhost:3000");
     });
+  });
+});
+
+describe("appUrl", () => {
+  beforeEach(() => {
+    delete mutableEnv.APP_BASE_URL;
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_ENV === undefined) {
+      delete mutableEnv.NODE_ENV;
+    } else {
+      mutableEnv.NODE_ENV = ORIGINAL_ENV;
+    }
+    if (ORIGINAL_BASE_URL === undefined) {
+      delete mutableEnv.APP_BASE_URL;
+    } else {
+      mutableEnv.APP_BASE_URL = ORIGINAL_BASE_URL;
+    }
+  });
+
+  /**
+   * The property under test is independence from the request. Behind Railway the
+   * server seeds its own origin from HOSTNAME/PORT, so every request.url reads
+   * http://0.0.0.0:8080/... A helper that took a request as its base would pass
+   * every "does it produce a valid URL" test while still sending the browser to
+   * an unroutable address, so the poisoning below is the point: with no request
+   * involved, the origin can only have come from the environment.
+   */
+  it("builds absolute URLs from the configured origin, not from a request", () => {
+    setEnv("production", "https://app.example.com");
+
+    expect(appUrl("/login").toString()).toBe("https://app.example.com/login");
+    expect(appUrl("/dashboard").toString()).toBe(
+      "https://app.example.com/dashboard",
+    );
+  });
+
+  it("never yields a container bind address, the shape the bug took", () => {
+    setEnv("production", "https://app.example.com");
+
+    for (const path of ["/login", "/dashboard", "/minutes/abc"]) {
+      const location = appUrl(path).toString();
+      expect(location).not.toContain("0.0.0.0");
+      expect(location).not.toContain(":8080");
+      expect(location.startsWith("https://app.example.com/")).toBe(true);
+    }
+  });
+
+  it("keeps the path and query the caller asked for", () => {
+    setEnv("production", "https://app.example.com");
+
+    expect(appUrl("/minutes/42?tab=notes").toString()).toBe(
+      "https://app.example.com/minutes/42?tab=notes",
+    );
+  });
+
+  it("returns a URL so callers can attach search params afterwards", () => {
+    setEnv("production", "https://app.example.com");
+
+    // How the OAuth callbacks build /login?error=... . Asserted here because a
+    // string return type would force that call site to re-parse, and re-parsing
+    // is where an origin quietly goes back to being request-derived.
+    const loginUrl = appUrl("/login");
+    loginUrl.searchParams.set("error", "invalid_state");
+
+    expect(loginUrl.toString()).toBe(
+      "https://app.example.com/login?error=invalid_state",
+    );
+  });
+
+  it("resolves an origin with a port without dropping it", () => {
+    setEnv("development", "https://app.example.com:8443");
+    expect(appUrl("/dashboard").toString()).toBe(
+      "https://app.example.com:8443/dashboard",
+    );
+  });
+
+  it("throws in production when the origin is missing, rather than guessing", () => {
+    setEnv("production");
+    expect(() => appUrl("/login")).toThrow(/APP_BASE_URL is missing/);
   });
 });

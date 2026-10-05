@@ -296,6 +296,33 @@ It is validated at startup (`src/lib/env.server.ts`): it must be an absolute
 is rejected. Anything else throws naming `APP_BASE_URL` before the first sign-in
 attempt.
 
+#### Redirects and the proxy
+
+`APP_BASE_URL` also supplies the origin for **every** redirect this app issues:
+the middleware guard to `/login`, and both OAuth callbacks to `/dashboard` or
+`/login?error=...`. They are built with `appUrl()` and must never be built from
+`request.url`.
+
+Behind Railway, `request.url` is the *container's* address, not the public one.
+Next's standalone server seeds its own origin from the bind address it was
+started with, so with `ENV HOSTNAME=0.0.0.0` (required — see `Dockerfile`) and
+Railway's `PORT=8080`, it believes it is `http://0.0.0.0:8080`. Every
+request-derived redirect therefore produced a well-formed URL to an unroutable
+address: login succeeded and the browser failed with `ERR_ADDRESS_INVALID` on a
+blank page. The token exchange was never at fault.
+
+Relative redirects from `redirect()` — the logout handler, `requireUser()`, the
+dashboard and minutes server actions — are unaffected. Next returns those to the
+client router as an app-relative `x-action-redirect`, so the browser resolves
+them against the address bar and the proxy never enters into it. Only the
+absolute `Location` headers were ever at risk, which is why the fix is confined
+to the six call sites listed above.
+
+Because middleware now reads this variable, a missing or malformed
+`APP_BASE_URL` fails `/dashboard`, `/minutes`, `/admin`, `/insights` and
+`/weekly-summary` loudly rather than silently redirecting somewhere unroutable.
+That is deliberate, and it is why the pre-deploy checklist above is not optional.
+
 `healthcheckPath` is `/`, which is the landing page. It touches the database
 only when a session cookie is present, so it stays healthy without a working
 `DATABASE_URL` and reports unhealthy if the app itself fails to boot.
