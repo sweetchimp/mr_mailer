@@ -228,8 +228,18 @@ fresh image never needs `.env` or network egress to build.
       derives the AES key that stored OAuth tokens are encrypted with. **Never
       rotate it casually** — doing so invalidates every stored token and forces
       all users to re-authenticate.
-- [ ] OAuth redirect URIs registered with the providers, matching the env vars
-      exactly (a mismatch surfaces as `redirect_uri_mismatch`):
+- [ ] `APP_BASE_URL` — this app's public origin, no trailing slash, e.g.
+      `https://<your-domain>`. Both OAuth callbacks are **derived** from it as
+      `<APP_BASE_URL>/auth/google/callback` and
+      `<APP_BASE_URL>/auth/microsoft/callback`, and each must be registered with
+      its provider exactly that way (a mismatch surfaces as
+      `redirect_uri_mismatch`). Required in production; validated at startup, so
+      a missing or malformed value fails immediately with the variable's name
+      rather than at the provider. Set it on `web` only — the worker never builds
+      a callback URL. The former `GOOGLE_REDIRECT_URI` and
+      `MICROSOFT_REDIRECT_URI` variables are no longer read.
+- [ ] OAuth redirect URIs registered with the providers, matching the derived
+      values above exactly:
       - `https://<your-domain>/auth/google/callback`
       - `https://<your-domain>/auth/microsoft/callback`
 - [ ] `TZ=Europe/Budapest` on **both** services. Node defaults to UTC in the
@@ -261,7 +271,30 @@ Create four services:
 
 The worker needs the same secrets as `web`: it decrypts stored OAuth tokens
 (`SESSION_SECRET`) and calls Groq. Set them at the project level, or on both
-services, rather than only on `web`.
+services, rather than only on `web`. `APP_BASE_URL` is the one exception — the
+worker never builds a callback URL, so it does not need it.
+
+#### OAuth callbacks
+
+`APP_BASE_URL` is the single source for both callback URLs, set on `web`:
+
+```text
+<APP_BASE_URL>/auth/google/callback
+<APP_BASE_URL>/auth/microsoft/callback
+```
+
+It replaces the previous pair of `GOOGLE_REDIRECT_URI` and
+`MICROSOFT_REDIRECT_URI` variables, which are now ignored. Two independently
+configured URLs could drift apart, and a *missing* one failed silently at the
+provider rather than here — `URLSearchParams` stringifies `undefined` into the
+literal text `"undefined"`, which Google forwards as a value and Microsoft
+rejects as not an absolute URI (`AADSTS90102`). Neither error mentions the
+variable that was actually missing.
+
+It is validated at startup (`src/lib/env.server.ts`): it must be an absolute
+`https://` URL, `http://` is accepted only for localhost, and a trailing slash
+is rejected. Anything else throws naming `APP_BASE_URL` before the first sign-in
+attempt.
 
 `healthcheckPath` is `/`, which is the landing page. It touches the database
 only when a session cookie is present, so it stays healthy without a working
@@ -280,6 +313,37 @@ It is idempotent, so re-running it on every deploy is safe.
 The inline `DATABASE_URL` takes precedence over `.env` — Prisma's dotenv load
 does not overwrite variables already in the environment — so the command above
 targets the database you named even when a local `.env` points somewhere else.
+
+On PowerShell the `VAR=value cmd` prefix is bash and does not work: PowerShell
+parses it as a single literal argument and hands it to npm, so the migration runs
+happily against whatever `.env` points at instead. Set the variable first, as a
+separate statement:
+
+```powershell
+$env:DATABASE_URL = "mysql://user:pass@host:3306/mr_mailer"
+npm run db:deploy
+```
+
+Percent-encode the password if it contains any URL-reserved character
+(`@ : / ? # [ ] %`), which managed providers generate without warning. An
+unescaped `@` truncates the password mid-URL and surfaces as `P1000
+Authentication failed`, which reads like wrong credentials and is not:
+
+```powershell
+[uri]::EscapeDataString('p@$$w0rd')   # p%40%24%24w0rd
+```
+
+`prisma migrate deploy` also needs `CREATE, DROP, REFERENCES, ALTER` on the
+target database, which is more than `db push` requires — a read-only or
+`SELECT`-only user fails partway rather than up front. Check the applied state
+with `npx prisma migrate status` before and after; it is read-only and reports
+whether the database is in sync without writing anything.
+
+MySQL DDL is not transactional, so a migration that fails partway leaves tables
+behind and a re-run then fails differently because those tables already exist.
+On a disposable database the clean recovery is to drop and recreate it and re-run
+`db:deploy`; `npx prisma migrate resolve --rolled-back 20260924000000_init` is
+the surgical alternative when the database has data you want to keep.
 
 ### Self-hosted (Docker Compose)
 

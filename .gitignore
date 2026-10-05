@@ -29,6 +29,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+# local image build transcripts (docker build > build.out 2> build.err)
+build.err
+build.out
 
 # env files (can opt-in for committing if needed)
 .env*

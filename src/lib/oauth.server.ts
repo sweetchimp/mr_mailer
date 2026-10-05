@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { prisma } from "./prisma.server";
 import { encrypt } from "./crypto.server";
+import { getAppBaseUrl } from "./env.server";
 import type { Provider, User } from "@prisma/client";
 
 const OAUTH_STATE_COOKIE = "oauth_state";
@@ -151,13 +152,30 @@ function getMicrosoftAuthEndpoint(): string {
   return `https://login.microsoftonline.com/${getMicrosoftTenant()}/oauth2/v2.0/authorize`;
 }
 
+/**
+ * Both callbacks are derived from one origin so they cannot disagree with each
+ * other, and so a missing value fails at startup naming the variable instead of
+ * at the provider carrying `redirect_uri=undefined`. See getAppBaseUrl() for
+ * the validation rules and why the request is not consulted.
+ *
+ * The former GOOGLE_REDIRECT_URI and MICROSOFT_REDIRECT_URI variables are no
+ * longer read and have no effect if set.
+ */
+export function googleRedirectUri(): string {
+  return `${getAppBaseUrl()}/auth/google/callback`;
+}
+
+export function microsoftRedirectUri(): string {
+  return `${getAppBaseUrl()}/auth/microsoft/callback`;
+}
+
 export function buildAuthUrl(provider: Provider, state: string, codeVerifier: string): string {
   const challenge = generateCodeChallenge(codeVerifier);
 
   if (provider === "GOOGLE") {
     const params = new URLSearchParams({
       client_id: process.env.GOOGLE_CLIENT_ID!,
-      redirect_uri: process.env.GOOGLE_REDIRECT_URI!,
+      redirect_uri: googleRedirectUri(),
       response_type: "code",
       scope: GOOGLE_SCOPES.join(" "),
       state,
@@ -171,7 +189,7 @@ export function buildAuthUrl(provider: Provider, state: string, codeVerifier: st
 
   const params = new URLSearchParams({
     client_id: process.env.MICROSOFT_CLIENT_ID!,
-    redirect_uri: process.env.MICROSOFT_REDIRECT_URI!,
+    redirect_uri: microsoftRedirectUri(),
     response_type: "code",
     scope: MICROSOFT_SCOPES.join(" "),
     state,
@@ -202,12 +220,12 @@ async function exchangeCode(
     tokenUrl = "https://oauth2.googleapis.com/token";
     clientId = process.env.GOOGLE_CLIENT_ID!;
     clientSecret = process.env.GOOGLE_CLIENT_SECRET!;
-    redirectUri = process.env.GOOGLE_REDIRECT_URI!;
+    redirectUri = googleRedirectUri();
   } else {
     tokenUrl = getMicrosoftTokenEndpoint();
     clientId = process.env.MICROSOFT_CLIENT_ID!;
     clientSecret = process.env.MICROSOFT_CLIENT_SECRET!;
-    redirectUri = process.env.MICROSOFT_REDIRECT_URI!;
+    redirectUri = microsoftRedirectUri();
   }
 
   body.set("client_id", clientId);
