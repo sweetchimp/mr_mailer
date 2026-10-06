@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { appUrl, getAppBaseUrl } from "../env.server";
+import {
+  appUrl,
+  getAppBaseUrl,
+  getContactEmail,
+  getOperatorName,
+  getRetentionDays,
+  DEFAULT_RETENTION_DAYS,
+} from "../env.server";
 
 /**
  * Every assertion here is about one guarantee: a value that reaches a provider
@@ -220,4 +227,136 @@ describe("appUrl", () => {
     setEnv("production");
     expect(() => appUrl("/login")).toThrow(/APP_BASE_URL is missing/);
   });
+});
+
+/**
+ * The two legal variables are published verbatim to logged-out visitors on
+ * /privacy and /terms, so the only acceptable value is one that names this
+ * deployment. Unlike APP_BASE_URL there is no development fallback: a
+ * plausible-looking default here would be quoted as fact on a live privacy
+ * policy, which is the failure mode the throw exists to prevent.
+ */
+describe("legal identity variables", () => {
+  const LEGAL_VARS = ["OPERATOR_NAME", "CONTACT_EMAIL", "RETENTION_DAYS"] as const;
+  const ORIGINAL_VALUES = new Map<string, string | undefined>();
+
+  beforeEach(() => {
+    for (const name of LEGAL_VARS) {
+      ORIGINAL_VALUES.set(name, process.env[name]);
+      delete mutableEnv[name];
+    }
+  });
+
+  afterEach(() => {
+    for (const name of LEGAL_VARS) {
+      const original = ORIGINAL_VALUES.get(name);
+      if (original === undefined) {
+        delete mutableEnv[name];
+      } else {
+        mutableEnv[name] = original;
+      }
+    }
+    ORIGINAL_VALUES.clear();
+  });
+
+  describe("when set to a real value", () => {
+    it("returns the operator name trimmed", () => {
+      mutableEnv.OPERATOR_NAME = "  Ada Lovelace Ltd  ";
+      expect(getOperatorName()).toBe("Ada Lovelace Ltd");
+    });
+
+    it("returns the contact address trimmed", () => {
+      mutableEnv.CONTACT_EMAIL = "  privacy@mrmailer.test  ";
+      expect(getContactEmail()).toBe("privacy@mrmailer.test");
+    });
+  });
+
+  describe.each([
+    ["OPERATOR_NAME", () => getOperatorName()],
+    ["CONTACT_EMAIL", () => getContactEmail()],
+  ] as const)("%s", (name, read) => {
+    it("throws rather than rendering without a name", () => {
+      expect(() => read()).toThrow(new RegExp(name));
+    });
+
+    it("throws on an empty value", () => {
+      mutableEnv[name] = "   ";
+      expect(() => read()).toThrow(/placeholder/);
+    });
+
+    it("throws on the documented placeholder", () => {
+      mutableEnv[name] = "change-me";
+      expect(() => read()).toThrow(/placeholder/);
+    });
+
+    it("names .env.example so the fix is obvious", () => {
+      mutableEnv[name] = "change-me";
+      expect(() => read()).toThrow(/\.env\.example/);
+    });
+
+    it("throws on a mixed-case placeholder, not just an exact match", () => {
+      mutableEnv[name] = "Change-Me";
+      expect(() => read()).toThrow(/placeholder/);
+    });
+  });
+
+  it("rejects the example.com address printed in .env.example", () => {
+    // The documented failure: copying .env.example verbatim. A policy page
+    // quoting privacy@example.com as the contact is worse than a 500, because
+    // it reads as an intentional statement.
+    mutableEnv.CONTACT_EMAIL = "privacy@example.com";
+    expect(() => getContactEmail()).toThrow(/placeholder/);
+  });
+
+  it("rejects example.org and example.net too", () => {
+    for (const domain of ["example.org", "example.net"]) {
+      mutableEnv.CONTACT_EMAIL = `privacy@${domain}`;
+      expect(() => getContactEmail()).toThrow(/placeholder/);
+    }
+  });
+
+  it("accepts a non-reserved domain", () => {
+    mutableEnv.CONTACT_EMAIL = "privacy@mrmailer.dev";
+    expect(getContactEmail()).toBe("privacy@mrmailer.dev");
+  });
+
+  it("rejects a placeholder operator name", () => {
+    mutableEnv.OPERATOR_NAME = "Your Company Name";
+    expect(() => getOperatorName()).toThrow(/placeholder/);
+  });
+
+  it("does not treat an operator name with a .example TLD as an email", () => {
+    // `getOperatorName` reads the same helper, and an operator named after a
+    // reserved TLD is not the same mistake as publishing a reserved address.
+    mutableEnv.OPERATOR_NAME = "Example Industries";
+    expect(getOperatorName()).toBe("Example Industries");
+  });
+});
+
+describe("getRetentionDays", () => {
+  beforeEach(() => {
+    delete mutableEnv.RETENTION_DAYS;
+  });
+
+  afterEach(() => {
+    delete mutableEnv.RETENTION_DAYS;
+  });
+
+  it("falls back to the documented default when unset", () => {
+    expect(getRetentionDays()).toBe(DEFAULT_RETENTION_DAYS);
+    expect(DEFAULT_RETENTION_DAYS).toBe(90);
+  });
+
+  it("reads the configured value", () => {
+    mutableEnv.RETENTION_DAYS = "30";
+    expect(getRetentionDays()).toBe(30);
+  });
+
+  it.each(["", "   ", "forever", "0", "-5", "90 days"])(
+    "falls back to the default rather than trusting %j",
+    (raw) => {
+      mutableEnv.RETENTION_DAYS = raw;
+      expect(getRetentionDays()).toBe(DEFAULT_RETENTION_DAYS);
+    },
+  );
 });

@@ -135,18 +135,25 @@ node .next/standalone/server.js
 | `DATABASE_URL` | MySQL connection string |
 | `REDIS_URL` | Redis connection string |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth app credentials |
-| `GOOGLE_REDIRECT_URI` | Must match the URI registered in the Cloud Console |
 | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` | Microsoft app credentials |
 | `MICROSOFT_TENANT_ID` | `consumers`, `common`, `organizations`, or a tenant GUID |
-| `MICROSOFT_REDIRECT_URI` | Must match the URI registered in Entra |
+| `APP_BASE_URL` | The app's public origin, no trailing slash. Both OAuth callback URLs are derived from it. |
 | `GROQ_API_KEY` | Groq API key used for summarization |
 | `GROQ_MODEL` | Groq model to use (default `openai/gpt-oss-120b`; models retire without notice, so prefer the env override over hardcoding) |
 | `SESSION_SECRET` | Signs session JWTs **and** encrypts stored OAuth tokens. Generate a random 32+ character value. The app refuses to start in production if it is missing or too short. |
-| `RETENTION_DAYS` | How long to keep email history (default 90) |
+| `RETENTION_DAYS` | How long to keep email summaries and job-failure logs (default 90) |
+| `OPERATOR_NAME` | Legal operator named on `/privacy` and `/terms` |
+| `CONTACT_EMAIL` | Address published for privacy and deletion requests |
 
 > `SESSION_SECRET` is deliberately dual-purpose. Changing it invalidates every
 > stored OAuth token, so users will have to reconnect their mailbox. Do not
 > rotate it casually.
+
+> `OPERATOR_NAME` and `CONTACT_EMAIL` have **no default on purpose**. Both are
+> published as fact to logged-out visitors, so a missing or placeholder value
+> (`change-me`, `privacy@example.com`, …) throws when the legal pages render
+> rather than shipping a placeholder to a live privacy policy. See
+> `.env.example` for the rejected values.
 
 ## Architecture notes
 
@@ -251,6 +258,11 @@ fresh image never needs `.env` or network egress to build.
       "Applying the schema" below for why this is a manual step.
 - [ ] `GROQ_API_KEY` set, and `GROQ_MODEL` overridden if your key cannot reach
       the default — Groq retires models without notice.
+- [ ] `OPERATOR_NAME` and `CONTACT_EMAIL` set on `web` (the worker never renders
+      a page). `/privacy`, `/terms` and `/data-deletion` are readable before
+      sign-in and throw if either is missing or still a placeholder, so a
+      deploy that skips this fails visibly on those three URLs rather than
+      publishing `privacy@example.com`.
 
 ### Railway
 

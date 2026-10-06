@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
+import { LegalFooter } from "@/components/legal-footer";
 import { MrMailerLogo } from "@/components/mr-mailer-logo";
 import { getSessionCookieName, verifySession } from "@/lib/session.server";
 
@@ -90,6 +91,26 @@ export default async function Landing() {
       >
         Get Started
       </Link>
+
+      {/* Out of flow on purpose. The wrapper centres its children as a flex
+          column, so an in-flow footer would either sit under the button or —
+          if given `marginTop: "auto"` — swallow the free space and drag the
+          whole lockup to the top. Absolutely positioned it stays at the
+          bottom while the logo keeps its optical centre, and it comes last in
+          the DOM so it paints above the decorative overlay. */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: "28px",
+          display: "flex",
+          justifyContent: "center",
+          pointerEvents: "auto",
+        }}
+      >
+        <LegalFooter variant="brand" />
+      </div>
     </div>
   );
 }

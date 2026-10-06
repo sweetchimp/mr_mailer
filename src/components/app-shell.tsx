@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/current-session.server";
 import { getDashboardCounts, getProviderForUser } from "@/services/dashboard.server";
+import { LegalFooter } from "@/components/legal-footer";
 import { MrMailerMark } from "@/components/mr-mailer-logo";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { VerseModal } from "@/components/verse-modal";
@@ -11,7 +12,8 @@ import { RefreshButton } from "@/components/refresh-button";
  * The app chrome: activity ticker slot, light header, token-revoked notice,
  * footer nav.
  *
- * Shared by `/dashboard`, `/minutes`, `/insights` and `/weekly-summary` so the
+ * Shared by `/dashboard`, `/minutes`, `/insights`, `/weekly-summary` and
+ * `/settings` so the
  * four areas cannot drift apart. `ticker` is a slot rather than fetched here:
  * only the dashboard wants the activity bar, and sourcing it here would spend
  * three ticker queries on the other three routes for a bar they do not show.
@@ -184,6 +186,13 @@ export async function AppShell({
             >
               Weekly
             </Link>
+            <Link
+              href="/settings"
+              className="btn btn-outline px-3 py-2 text-[12px]"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              Settings
+            </Link>
           </nav>
           <div className="flex items-center gap-2">
             <ThemeSwitcher />
@@ -195,6 +204,12 @@ export async function AppShell({
               Log out
             </Link>
           </div>
+        </div>
+
+        {/* Sits outside the nav card so it reads as chrome rather than as a
+            fifth destination alongside Dashboard and Weekly. */}
+        <div className="mt-3 flex justify-center">
+          <LegalFooter fontFamily="var(--font-mono)" />
         </div>
       </footer>
     </div>

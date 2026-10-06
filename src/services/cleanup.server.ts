@@ -1,13 +1,5 @@
 import { prisma } from "../lib/prisma.server";
-
-const DEFAULT_RETENTION_DAYS = 90;
-
-function getRetentionDays(): number {
-  const val = process.env.RETENTION_DAYS;
-  if (!val) return DEFAULT_RETENTION_DAYS;
-  const parsed = parseInt(val, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RETENTION_DAYS;
-}
+import { getRetentionDays } from "../lib/env.server";
 
 export interface CleanupResult {
   emailSummariesDeleted: number;

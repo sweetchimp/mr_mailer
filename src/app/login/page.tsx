@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { prisma } from "@/lib/prisma.server";
 import { getSessionCookieName, verifySession } from "@/lib/session.server";
+import { LegalFooter } from "@/components/legal-footer";
 import { ProviderButton } from "@/components/provider-button";
 import { MrMailerLogo } from "@/components/mr-mailer-logo";
 
@@ -208,6 +210,53 @@ export default async function Login({ searchParams }: LoginPageProps) {
       >
         <div
           style={{
+            marginBottom: "18px",
+            fontSize: "13px",
+            lineHeight: 1.6,
+            textAlign: "center",
+            color: "var(--color-ink-soft)",
+            fontFamily: "var(--font-body)",
+          }}
+        >
+          Mr Mailer reads and sends mail on your behalf.{" "}
+          <Link
+            href="/privacy"
+            style={{
+              color: "var(--color-brand-blue)",
+              textDecoration: "underline",
+              textUnderlineOffset: "2px",
+            }}
+          >
+            Read the privacy policy
+          </Link>{" "}
+          to see exactly what it accesses.
+        </div>
+
+        <div
+          style={{
+            marginBottom: "18px",
+            padding: "12px 14px",
+            borderRadius: "10px",
+            fontSize: "12px",
+            lineHeight: 1.6,
+            textAlign: "center",
+            color: "var(--color-ink-faint)",
+            fontFamily: "var(--font-body)",
+            background: "var(--color-surface-soft)",
+            border: "1px solid var(--color-line)",
+          }}
+        >
+          Google may warn that this app is unverified, because it hasn&apos;t
+          gone through Google&apos;s verification process. Choose{" "}
+          <strong style={{ color: "var(--color-ink-soft)" }}>Advanced</strong>,
+          then <strong style={{ color: "var(--color-ink-soft)" }}>
+            Go to Mr Mailer (unsafe)
+          </strong>{" "}
+          to continue.
+        </div>
+
+        <div
+          style={{
             display: "flex",
             flexDirection: "column",
             gap: "14px",
@@ -294,6 +343,16 @@ export default async function Login({ searchParams }: LoginPageProps) {
           <br />
           You review and approve everything before it&apos;s sent.
         </p>
+
+        <div
+          style={{
+            marginTop: "16px",
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
+          <LegalFooter />
+        </div>
       </section>
     </div>
   );

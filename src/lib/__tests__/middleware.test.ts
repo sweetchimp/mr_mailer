@@ -130,12 +130,55 @@ describe("middleware", () => {
       "/admin/job-failures",
       "/insights",
       "/weekly-summary",
+      "/settings",
     ])("redirects %s to the public origin", async (path) => {
       const response = await runMiddleware(request(path));
 
       expect(locationOf(response).origin).toBe(APP_BASE_URL);
       expect(locationOf(response).pathname).toBe("/login");
     });
+  });
+
+  /**
+   * The matcher is an allowlist, so what makes the legal pages public is that
+   * they are absent from it — not any special-casing inside `middleware`.
+   * Asserted directly against `config` because Next applies the matcher before
+   * the handler runs: calling `middleware` with a /privacy request would test
+   * the handler, not the routing decision that actually protects (or in this
+   * case does not protect) the page.
+   */
+  describe("which routes the guard is installed on", () => {
+    /** Mirrors Next's matcher semantics for the entry shapes used here. */
+    function matches(path: string, pattern: string): boolean {
+      if (pattern.endsWith("/:path*")) {
+        return path.startsWith(pattern.slice(0, -"/:path*".length));
+      }
+      return path === pattern;
+    }
+
+    it("guards /settings, which is behind login", async () => {
+      const { config } = await import("@/middleware");
+
+      expect(
+        config.matcher.some((pattern) => matches("/settings", pattern)),
+      ).toBe(true);
+    });
+
+    it.each([
+      "/privacy",
+      "/terms",
+      "/data-deletion",
+      "/account-deleted",
+    ])(
+      "leaves %s outside the matcher so it is reachable without logging in",
+      async (path) => {
+        const { config } = await import("@/middleware");
+
+        expect(
+          config.matcher.some((pattern) => matches(path, pattern)),
+        ).toBe(false);
+      },
+    );
   });
 
   describe("passing an authenticated request through", () => {

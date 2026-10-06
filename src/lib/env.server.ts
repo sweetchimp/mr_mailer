@@ -7,6 +7,86 @@ const INSECURE_PLACEHOLDERS = new Set([
 ]);
 
 /**
+ * Reads one of the two values the legal pages publish about their operator.
+ *
+ * Deliberately has no fallback. The contact address and operator name are
+ * statements of fact about who runs this deployment, and a missing value would
+ * otherwise ship a placeholder like `privacy@example.com` to a live privacy
+ * policy — a worse outcome than a 500, because it looks deliberate. There is no
+ * development default either: inventing a plausible-looking address here would
+ * be the same failure with a nicer name.
+ *
+ * The `example.*` domains are rejected because `.env.example` documents one,
+ * and copying that file verbatim is the most likely way a placeholder reaches
+ * production.
+ *
+ * Throws rather than returning null so the failure happens at the point of
+ * render with the variable's name in the message, not somewhere upstream as an
+ * empty string in a sentence.
+ */
+const PLACEHOLDER_EMAIL_DOMAINS = ["example.com", "example.org", "example.net"];
+const PLACEHOLDER_OPERATOR_NAMES = new Set([
+  "your company name",
+  "your name",
+  "operator",
+  "company name",
+  "example",
+  "example inc",
+]);
+
+function getLegalIdentityVariable(
+  name: "OPERATOR_NAME" | "CONTACT_EMAIL",
+): string {
+  const value = process.env[name]?.trim();
+  const lower = value?.toLowerCase();
+  const domain = value?.split("@")[1]?.toLowerCase();
+
+  const isPlaceholder =
+    !value ||
+    INSECURE_PLACEHOLDERS.has(lower!) ||
+    (domain !== undefined && PLACEHOLDER_EMAIL_DOMAINS.includes(domain)) ||
+    PLACEHOLDER_OPERATOR_NAMES.has(lower!);
+
+  if (!isPlaceholder) {
+    return value;
+  }
+
+  throw new Error(
+    `${name} is missing or set to a placeholder. It is published on the ` +
+      `/privacy and /terms pages and must name the real operator or contact ` +
+      `address for this deployment — the placeholder form in .env.example is ` +
+      `rejected on purpose.`,
+  );
+}
+
+/** The legal operator of this deployment, as shown on /privacy and /terms. */
+export function getOperatorName(): string {
+  return getLegalIdentityVariable("OPERATOR_NAME");
+}
+
+/** The address privacy and deletion requests are sent to, shown on /privacy. */
+export function getContactEmail(): string {
+  return getLegalIdentityVariable("CONTACT_EMAIL");
+}
+
+/** Fallback used only when `RETENTION_DAYS` is unset or nonsensical. */
+export const DEFAULT_RETENTION_DAYS = 90;
+
+/**
+ * How long email summaries and job-failure logs are kept.
+ *
+ * Lives here rather than in `cleanup.server.ts` so the privacy policy can state
+ * the number the app actually enforces without importing Prisma into a page
+ * that renders for logged-out visitors.
+ */
+export function getRetentionDays(): number {
+  const raw = process.env.RETENTION_DAYS;
+  if (!raw) return DEFAULT_RETENTION_DAYS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RETENTION_DAYS;
+}
+
+/**
  * SESSION_SECRET is dual-purpose: it signs the session JWT *and* derives the
  * AES-256-GCM key that OAuth access/refresh tokens are encrypted with.
  *
