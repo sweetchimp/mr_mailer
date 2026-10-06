@@ -12,14 +12,20 @@ import {
   type SenderHistory,
 } from "../lib/sender-history";
 import { getReplyStyleNote } from "./reply-style.server";
+import { SYSTEM_PROMPT } from "../lib/categorization-prompt";
 import type { Priority } from "@prisma/client";
 import type { EmailMessage } from "./email-provider.server";
 
 // The Groq client and the model id live in lib/groq.server.ts: both are shared
 // with the meeting-minutes generator, and the laziness that keeps `next build`
 // working in Docker is explained in full there.
+//
+// The prompt lives in lib/categorization-prompt.ts so the categorization eval
+// script can read it without importing Prisma or the Groq client. There is
+// exactly one copy: web and worker both reach it through `summarizeEmails`
+// below.
 
-interface EmailSummaryResult {
+export interface EmailSummaryResult {
   priority: "HIGH" | "MEDIUM" | "LOW";
   summaryText: string;
   suggestedReply: string | null;
@@ -29,26 +35,6 @@ interface EmailSummaryResult {
 interface SummarizedEmail extends EmailMessage {
   summary: EmailSummaryResult | null;
 }
-
-const SYSTEM_PROMPT = `You are an email triage assistant for a busy professional. Analyze the email and return a JSON object with exactly these fields: priority, summaryText, suggestedReply, actionRequired.
-
-Choose priority with these rules, applied in order:
-
-HIGH — needs a reply. Use it only when the email is workplace-related AND urgent: a permission or approval request (time off, budget, access, sign-off), an escalation or a dispute that needs resolving, mail from a senior person or a significant external organisation or stakeholder, a request bound to a deadline, or anything that needs a decision or an explicit response. Personal, social, promotional, and automated mail is never HIGH, however urgent it sounds.
-MEDIUM — worth a glance. Workplace-related, but not time-critical: status updates, mildly relevant FYIs, and requests that can wait.
-LOW — FYI. Newsletters, automated notifications, promotional content, and informational-only messages.
-
-If the email sits between two levels, choose the lower one rather than reading urgency into it.
-
-- summaryText: 1-2 sentences capturing the specific purpose and key details of the email. Mention names, dates, amounts, or action items — not vague generalities.
-- suggestedReply: A reply the recipient could actually send. Match the sender's tone — formal for business/professional emails, casual for personal ones. Reference specific details (names, dates, requests) rather than generic acknowledgments. Keep it concise for simple emails (2-3 sentences for a confirmation) and more thorough for complex ones (up to 100 words for a detailed question). Sound like a competent person typing, not corporate boilerplate. If no reply is needed, return null.
-- actionRequired: true only for HIGH and MEDIUM emails that need a response, a decision, or carry a deadline; false for FYIs, newsletters, and automated notifications.
-
-When a sender history note is supplied, treat it as a prior, not a verdict: it records how this user classified this sender before. Use it to break ties and steady borderline calls, but if the content of the current email is clearly more or less urgent than the history suggests, follow the content.
-
-When a note about how this user writes is supplied, it describes their own previous replies. Apply it to suggestedReply ONLY. Never let it affect priority, summaryText, or actionRequired: a note about someone's tone is not evidence about how urgent an email is, and letting it leak into triage would mean a stylistic quirk could cause an email to be mis-prioritised. If the note conflicts with what the email clearly calls for, follow the email.
-
-Return ONLY valid JSON, no markdown fences.`;
 
 /**
  * The user's learned writing style, read once per batch.
@@ -77,7 +63,22 @@ async function loadStyleNote(
   }
 }
 
-async function summarizeEmail(
+/**
+ * One email, one model call. Exported so a script can classify a single
+ * message with the *real* prompt and the *real* model — a copy of this
+ * function would be free to drift from the one the digest uses, and an eval
+ * built on that copy would be measuring a prompt nobody ships.
+ *
+ * The eval script does not call it: it has to run without a database, and
+ * this module pulls Prisma in through the digest pipeline, so the eval
+ * transcribes the request shape instead. The prompt is the part that must not
+ * drift, and it does not — both sides read it from lib/categorization-prompt.
+ *
+ * Returns null rather than throwing on an unusable response, so a caller
+ * classifying many emails can decide for itself whether one bad reply should
+ * fail the batch. `summarizeEmails` does exactly that.
+ */
+export async function summarizeEmail(
   email: EmailMessage,
   senderNote: string | null,
   styleNote: string | null,
@@ -102,7 +103,14 @@ async function summarizeEmail(
     model,
     response_format: { type: "json_object" },
     temperature: 0.3,
-    max_tokens: 512,
+    // `max_completion_tokens`, not `max_tokens`, for the same reason
+    // minutes.server.ts uses it: the default model is a reasoning model and
+    // reasoning draws from this budget too. This prompt asks for a priority
+    // call under several competing rules, so it reasons longer than the old
+    // one did — long enough that 512 truncated the reply and Groq rejected it
+    // as invalid JSON, which surfaced as an email with no summary at all rather
+    // than as an error anyone would read. 2048 makes the cap a non-issue.
+    max_completion_tokens: 2048,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: `${header.join("\n")}\n\n${content}` },
